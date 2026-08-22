@@ -112,6 +112,10 @@ export interface PanelCopy {
     copied: string
     copyError: string
   }
+  selection: {
+    label: string
+    remove: string
+  }
   app: {
     openSettings: string
     settings: string
@@ -285,6 +289,10 @@ const EN: PanelCopy = {
     copied: 'Command copied',
     copyError: 'Could not copy the command. Run the installer from the original installation source instead.',
   },
+  selection: {
+    label: 'Quoted selection',
+    remove: 'Remove quoted selection',
+  },
   app: {
     openSettings: 'Open settings',
     settings: 'Settings',
@@ -457,6 +465,10 @@ const ZH: PanelCopy = {
     copyCheckoutCommand: '复制 checkout 命令',
     copied: '命令已复制',
     copyError: '无法复制命令，请回到原安装来源重新运行安装脚本。',
+  },
+  selection: {
+    label: '引用选文',
+    remove: '移除引用选文',
   },
   app: {
     openSettings: '打开设置',

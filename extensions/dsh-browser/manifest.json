@@ -8,6 +8,7 @@
   "permissions": [
     "sidePanel",
     "storage",
+    "contextMenus",
     "tabs",
     "activeTab",
     "scripting",

@@ -63,6 +63,11 @@ function mockChrome() {
       open: vi.fn(async () => {}),
       setPanelBehavior: vi.fn(async () => {}),
     },
+    contextMenus: {
+      removeAll: vi.fn(async () => {}),
+      create: vi.fn(),
+      onClicked: { addListener: vi.fn() },
+    },
     storage: {
       local: {
         get: vi.fn(async () => ({})),

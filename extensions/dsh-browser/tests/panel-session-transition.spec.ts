@@ -28,6 +28,11 @@ describe('panel session transitions', () => {
         local: {
           get: vi.fn(async () => ({ dshSettings: { autoResumeSession: false } })),
         },
+        session: {
+          get: vi.fn(async () => ({})),
+          set: vi.fn(async () => {}),
+          remove: vi.fn(async () => {}),
+        },
       },
     })
 
@@ -55,6 +60,8 @@ describe('panel session transitions', () => {
       onApprovalResolved: vi.fn(() => unsubscribe),
       onTabAffinity: vi.fn(() => unsubscribe),
       onSessionResumeHint: vi.fn((callback) => { onResumeHint = callback; return unsubscribe }),
+      onSelectionPending: vi.fn(() => unsubscribe),
+      onSelectionAsk: vi.fn(() => unsubscribe),
       respondToApproval: vi.fn(async () => {}),
       resolveTabAffinity: vi.fn(async () => {}),
       rebindTabAffinity: vi.fn(async () => {}),

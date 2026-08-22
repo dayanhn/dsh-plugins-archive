@@ -76,7 +76,19 @@ interface SessionResumeHintMessage {
   sessionId: string | null
 }
 
-type BackgroundMessage = RpcResultMessage | RespondResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SessionResumeHintMessage
+/** A selection was stashed by the "ask with selection" context menu. */
+interface SelectionPendingMessage {
+  type: 'selection-pending'
+}
+
+/** The "explain selection" prompt was sent; show that session. */
+interface SelectionAskMessage {
+  type: 'selection-ask'
+  kind: 'explain'
+  sessionId: string
+}
+
+type BackgroundMessage = RpcResultMessage | RespondResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SessionResumeHintMessage | SelectionPendingMessage | SelectionAskMessage
 
 /** Structured gateway failure retained for product-level error handling. */
 export class PanelRpcError extends Error {
@@ -100,7 +112,12 @@ function panelRpcError(failure: RpcFailurePayload | undefined, fallbackMessage: 
 
 /** The panel API surface. */
 export interface PanelApi {
-  rpc<T = unknown>(method: string, payload?: unknown): Promise<T>
+  /**
+   * One unary gateway RPC.
+   * @param options.bypassTabBinding - skip the tab-binding / whole-page snapshot
+   *   preparation for `session.prompt` (selection-carrying prompts are self-contained).
+   */
+  rpc<T = unknown>(method: string, payload?: unknown, options?: { bypassTabBinding?: boolean }): Promise<T>
   respond(rpcId: string, result: RespondResult): Promise<unknown>
   onStatus(callback: (state: BridgeState, caps: BridgeCaps | null) => void): () => void
   onEvent(callback: (frame: ServerFrame) => void): () => void
@@ -108,6 +125,8 @@ export interface PanelApi {
   onApprovalResolved(callback: (id: string) => void): () => void
   onTabAffinity(callback: (state: TabAffinityState) => void): () => void
   onSessionResumeHint(callback: (sessionId: string | null) => void): () => void
+  onSelectionPending(callback: () => void): () => void
+  onSelectionAsk(callback: (sessionId: string) => void): () => void
   respondToApproval(id: string, decision: ApprovalDecision): Promise<void>
   resolveTabAffinity(revision: number, decision: TabAffinityDecision, sessionId: string | null): Promise<void>
   rebindTabAffinity(): Promise<void>
@@ -134,6 +153,8 @@ export function connectPanel(): PanelApi {
   const approvalResolvedListeners = new Set<(id: string) => void>()
   const tabAffinityListeners = new Set<(state: TabAffinityState) => void>()
   const sessionResumeHintListeners = new Set<(sessionId: string | null) => void>()
+  const selectionPendingListeners = new Set<() => void>()
+  const selectionAskListeners = new Set<(sessionId: string) => void>()
 
   let port: chrome.runtime.Port | null = null
   let reconnectPromise: Promise<chrome.runtime.Port> | null = null
@@ -194,6 +215,12 @@ export function connectPanel(): PanelApi {
       }
       case 'session.resume-hint':
         for (const listener of sessionResumeHintListeners) listener(msg.sessionId)
+        break
+      case 'selection-pending':
+        for (const listener of selectionPendingListeners) listener()
+        break
+      case 'selection-ask':
+        for (const listener of selectionAskListeners) listener(msg.sessionId)
         break
     }
   }
@@ -299,13 +326,13 @@ export function connectPanel(): PanelApi {
   }
 
   return {
-    rpc<T>(method: string, payload?: unknown): Promise<T> {
+    rpc<T>(method: string, payload?: unknown, options?: { bypassTabBinding?: boolean }): Promise<T> {
       const id = crypto.randomUUID()
       return new Promise<T>((resolve, reject) => {
         const entry = { resolve: (value: unknown) => resolve(value as T), reject }
         pending.set(id, entry)
         void send(
-          { type: 'rpc', id, method, payload },
+          { type: 'rpc', id, method, payload, ...(options?.bypassTabBinding ? { bypassTabBinding: true } : {}) },
           { kind: 'rpc', id },
         ).catch((error: unknown) => {
           if (pending.get(id) !== entry) return
@@ -357,6 +384,14 @@ export function connectPanel(): PanelApi {
     onSessionResumeHint(callback) {
       sessionResumeHintListeners.add(callback)
       return () => { sessionResumeHintListeners.delete(callback) }
+    },
+    onSelectionPending(callback) {
+      selectionPendingListeners.add(callback)
+      return () => { selectionPendingListeners.delete(callback) }
+    },
+    onSelectionAsk(callback) {
+      selectionAskListeners.add(callback)
+      return () => { selectionAskListeners.delete(callback) }
     },
     respondToApproval(id, decision) {
       return send({ type: 'approval.response', id, decision })

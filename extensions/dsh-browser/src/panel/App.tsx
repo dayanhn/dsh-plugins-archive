@@ -14,6 +14,11 @@ import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts
 import type { BridgeState } from '../background/bridge.ts'
 import type { AffinityTab, TabAffinityDecision, TabAffinityState } from '../background/tab-affinity.ts'
 import { connectPanel, type PanelApi, type PanelSettings } from './api.ts'
+import {
+  buildQuotedPrompt,
+  PENDING_SELECTION_KEY,
+  type PendingSelection,
+} from '../background/selection-ask.ts'
 import { renderMarkdown } from './markdown.ts'
 import whaleUrl from '../../assets/icons/deepseek-256.png'
 import type { ApprovalDecision, ApprovalRequest } from '../security/approval.ts'
@@ -301,6 +306,25 @@ const MessageBody = memo(function MessageBody({
   return <pre>{row.text}</pre>
 })
 
+/** One-line preview of a stashed selection for the composer chip. */
+function previewOfSelection(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > 120 ? `${flat.slice(0, 120)}…` : flat
+}
+
+/** Validate a stored pending selection read from `chrome.storage.session`. */
+function normalizePendingSelection(value: unknown): PendingSelection | null {
+  if (typeof value !== 'object' || value === null) return null
+  const candidate = value as Partial<PendingSelection>
+  if (typeof candidate.text !== 'string' || candidate.text.trim() === '') return null
+  if (typeof candidate.url !== 'string') return null
+  return {
+    text: candidate.text,
+    url: candidate.url,
+    savedAt: typeof candidate.savedAt === 'number' ? candidate.savedAt : Date.now(),
+  }
+}
+
 interface HistoryPage {
   events: { event: SessionEventView }[]
   projections?: {
@@ -334,6 +358,7 @@ export function App(): React.JSX.Element {
   const [settings, setSettings] = useState<PanelSettings | null>(null)
   const [rows, setRows] = useState<Row[]>([])
   const [draft, setDraft] = useState<ComposerDraft<DraftImage>>(() => emptyComposerDraft())
+  const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
   const input = draft.text
   const draftImages = draft.images
   const [imageLimits, setImageLimits] = useState<ImageAttachmentLimits | null>(null)
@@ -436,6 +461,13 @@ export function App(): React.JSX.Element {
     })
   }, [])
 
+  // 右键"带着选中文本问 dsh"的暂存可能先于面板打开而存在：挂载时读取一次。
+  useEffect(() => {
+    void chrome.storage.session.get(PENDING_SELECTION_KEY).then((stored) => {
+      setPendingSelection(normalizePendingSelection(stored[PENDING_SELECTION_KEY]))
+    })
+  }, [])
+
   // 每次连接重启（设置变更/断线重连）都新建会话。状态消息逐条监听：
   // React 会把 stopped/connecting 等瞬时状态合并进同一帧渲染，依赖渲染
   // 状态无法可靠观察到"连接已重置"，因此在这里按消息粒度判定。
@@ -478,10 +510,16 @@ export function App(): React.JSX.Element {
     const offResumeHint = api.onSessionResumeHint((sessionId) => {
       setResumeHint({ ready: true, sessionId })
     })
+    const offSelectionPending = api.onSelectionPending(() => {
+      void chrome.storage.session.get(PENDING_SELECTION_KEY).then((stored) => {
+        setPendingSelection(normalizePendingSelection(stored[PENDING_SELECTION_KEY]))
+      })
+    })
+    const offSelectionAsk = api.onSelectionAsk((sessionId) => { void focusSession(sessionId) })
     void api.requestStatus().catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : String(cause))
     })
-    return () => { offStatus(); offEvent(); offApproval(); offApprovalResolved(); offTabAffinity(); offResumeHint() }
+    return () => { offStatus(); offEvent(); offApproval(); offApprovalResolved(); offTabAffinity(); offResumeHint(); offSelectionPending(); offSelectionAsk() }
   }, [api])
 
   useEffect(() => {
@@ -810,6 +848,37 @@ export function App(): React.JSX.Element {
     }
   }
 
+  /** Switch the panel to the session a selection-ask prompt was sent to. */
+  async function focusSession(sessionId: string): Promise<void> {
+    if (sessionChangingRef.current || sessionRef.current === sessionId) return
+    const transition = beginSessionTransition()
+    let history: HistoryPage | undefined
+    let historyError: unknown
+    try {
+      try {
+        history = await readHistory(sessionId)
+      } catch (cause) {
+        historyError = cause
+      }
+      if (sessionTransitionRef.current !== transition) return
+      const runtime = sessionRuntimeRef.current.snapshot(sessionId)
+      prepareSessionSwitch(runtime.running, runtime.questions)
+      sessionRef.current = sessionId
+      await api.setActiveSession(sessionId)
+      setSessionTitle(sessionId)
+      if (history !== undefined) applyHistory(sessionId, history)
+      else setError(historyError instanceof Error ? historyError.message : String(historyError))
+    } finally {
+      finishSessionTransition(transition)
+    }
+  }
+
+  /** Drop the quoted-selection chip and its storage stash. */
+  function clearPendingSelection(): void {
+    setPendingSelection(null)
+    void chrome.storage.session.remove(PENDING_SELECTION_KEY)
+  }
+
   /** 新建会话：后台确认重绑当前标签页后，再丢弃当前会话并创建新会话。 */
   async function startNewSession(): Promise<void> {
     if (sessionSwitchBlocked || sessionChangingRef.current) return
@@ -881,6 +950,8 @@ export function App(): React.JSX.Element {
   }
 
   async function send(textOverride?: string): Promise<void> {
+    // 建议按钮（textOverride）不带引用选文；普通输入发送时附带当前 chip。
+    const quoted = textOverride === undefined ? pendingSelection : null
     const text = (textOverride ?? input).trim()
     const submittedImages = textOverride === undefined ? draftImages : []
     const id = sessionRef.current
@@ -901,9 +972,15 @@ export function App(): React.JSX.Element {
       await api.rpc('session.prompt', {
         sessionId: id,
         mode: 'queue',
-        content: promptContent(text, submittedImages),
+        content: promptContent(
+          quoted === null
+            ? text
+            : buildQuotedPrompt(text, quoted.text, quoted.url, getUiLocale()),
+          submittedImages,
+        ),
         ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
-      })
+      }, { bypassTabBinding: quoted !== null })
+      if (quoted !== null) clearPendingSelection()
     } catch (cause) {
       if (sessionRef.current === id) {
         setError(imageErrorMessage(cause, copy, imageLimits ?? undefined))
@@ -1228,6 +1305,22 @@ export function App(): React.JSX.Element {
                   </span>
                 )
               })}
+            </div>
+          )}
+          {pendingSelection !== null && (
+            <div className="selection-chip">
+              <span className="selection-chip-label" title={pendingSelection.url}>{copy.selection.label}</span>
+              <span
+                className="selection-chip-text"
+                title={`${pendingSelection.text}\n\n${pendingSelection.url}`}
+              >{previewOfSelection(pendingSelection.text)}</span>
+              <button
+                type="button"
+                className="selection-chip-remove"
+                aria-label={copy.selection.remove}
+                title={copy.selection.remove}
+                onClick={clearPendingSelection}
+              >×</button>
             </div>
           )}
           <textarea

@@ -64,6 +64,7 @@ import {
   RecentSessionTracker,
   sessionIdFromFrame,
 } from './session-continuity.ts'
+import { initSelectionAsk } from './selection-ask.ts'
 
 /** User settings persisted in chrome.storage.local. */
 export interface Settings {
@@ -786,6 +787,33 @@ async function gatewayRpc(method: string, payload: unknown): Promise<unknown> {
   return rpc.request(method, payload)
 }
 
+/** Poll the bridge state until it reports connected or the timeout elapses. */
+function waitBridgeConnected(timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const started = Date.now()
+    const tick = (): void => {
+      if (bridge !== null && bridge.state === 'connected') { resolve(true); return }
+      if (Date.now() - started >= timeoutMs) { resolve(false); return }
+      setTimeout(tick, 250)
+    }
+    tick()
+  })
+}
+
+/** Post to every open panel port; a closed port is simply skipped. */
+function broadcastToPanel(message: unknown): void {
+  for (const port of panelPorts) {
+    try { port.postMessage(message) } catch { /* port closed */ }
+  }
+}
+
+/** Show one OS-level notification for the selection flows (best effort). */
+function notifySelection(title: string, message: string): void {
+  void Promise.resolve(
+    chrome.notifications.create('dsh-selection-ask', { type: 'basic', iconUrl: 'assets/icons/icon128.png', title, message }),
+  ).catch(() => {})
+}
+
 // ---- Panel ports ----
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -811,9 +839,10 @@ chrome.runtime.onConnect.addListener((port) => {
     const msg = message as { type?: string }
     switch (msg.type) {
       case 'rpc': {
-        const rpcMsg = message as { id: string; method: string; payload?: unknown }
+        const rpcMsg = message as { id: string; method: string; payload?: unknown; bypassTabBinding?: boolean }
         const refresh = followedPageRefresh
-        const prepare = rpcMsg.method === 'session.prompt'
+        // 选区类提示自带上下文，跳过标签页绑定与整页快照注入。
+        const prepare = rpcMsg.method === 'session.prompt' && !rpcMsg.bypassTabBinding
           ? ensureInitialTabBinding().then(async (bound) => {
               await refresh
               return bound
@@ -1085,6 +1114,18 @@ function openAssistantPanel(windowId?: number): void {
   }
   if (windowId !== undefined) void chrome.sidePanel.open({ windowId }).catch(() => {})
 }
+
+// ---- Selection context menu ----
+
+initSelectionAsk({
+  openPanel: (windowId) => openAssistantPanel(windowId),
+  waitBridgeConnected,
+  recentSessionId: () => recentSession.current(),
+  rememberSession: (sessionId) => { void recentSession.ready.then(() => recentSession.remember(sessionId)) },
+  rpc: gatewayRpc,
+  broadcastToPanel,
+  notify: notifySelection,
+})
 
 // Open the side panel when the toolbar icon is clicked.
 // Chrome 116+ uses chrome.sidePanel; Firefox has no sidePanel API, so the

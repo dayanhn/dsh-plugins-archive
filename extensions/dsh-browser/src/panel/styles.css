@@ -2468,3 +2468,45 @@ textarea:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.selection-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--blue-wash);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.selection-chip-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--blue-ink);
+}
+
+.selection-chip-text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.selection-chip-remove {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.selection-chip-remove:hover {
+  color: var(--ink-strong);
+}
