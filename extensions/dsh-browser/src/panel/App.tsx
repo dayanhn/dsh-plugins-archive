@@ -16,6 +16,7 @@ import type { AffinityTab, TabAffinityDecision, TabAffinityState } from '../back
 import { connectPanel, type PanelApi, type PanelSettings } from './api.ts'
 import {
   buildQuotedPrompt,
+  PENDING_EXPLAIN_KEY,
   PENDING_SELECTION_KEY,
   type PendingSelection,
 } from '../background/selection-ask.ts'
@@ -306,6 +307,18 @@ const MessageBody = memo(function MessageBody({
   return <pre>{row.text}</pre>
 })
 
+/** Stashed explain prompts older than this are stale (dsh was down, etc.). */
+const PENDING_EXPLAIN_TTL_MS = 60_000
+
+/** Validate the stashed explain prompt read from `chrome.storage.session`. */
+function normalizePendingExplain(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const candidate = value as { prompt?: unknown; savedAt?: unknown }
+  if (typeof candidate.prompt !== 'string' || candidate.prompt.trim() === '') return null
+  if (typeof candidate.savedAt === 'number' && Date.now() - candidate.savedAt > PENDING_EXPLAIN_TTL_MS) return null
+  return candidate.prompt
+}
+
 /** One-line preview of a stashed selection for the composer chip. */
 function previewOfSelection(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -359,6 +372,8 @@ export function App(): React.JSX.Element {
   const [rows, setRows] = useState<Row[]>([])
   const [draft, setDraft] = useState<ComposerDraft<DraftImage>>(() => emptyComposerDraft())
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
+  /** Bumped when an explain prompt may be stashed in session storage. */
+  const [explainTrigger, setExplainTrigger] = useState(0)
   const input = draft.text
   const draftImages = draft.images
   const [imageLimits, setImageLimits] = useState<ImageAttachmentLimits | null>(null)
@@ -468,6 +483,25 @@ export function App(): React.JSX.Element {
     })
   }, [])
 
+  // "解释选中文本"的提示词由后台写入会话存储；面板连上后重新触发一次
+  // 交接检查（覆盖面板刚打开、消息早于 React 监听器到达的情况）。
+  useEffect(() => {
+    if (state === 'connected') setExplainTrigger((n) => n + 1)
+  }, [state])
+
+  // 会话就绪后把暂存的解释提示词作为普通消息发出：走常规聊天流，
+  // 回答随之流式渲染（而不是后台先发、面板后切会话的 history 快照）。
+  useEffect(() => {
+    if (explainTrigger === 0 || state !== 'connected' || sessionChanging || busy || !sessionReady) return
+    void chrome.storage.session.get(PENDING_EXPLAIN_KEY).then((stored) => {
+      const prompt = normalizePendingExplain(stored[PENDING_EXPLAIN_KEY])
+      if (prompt === null) return
+      if (sessionRef.current === null || sessionChangingRef.current || sendingRef.current) return
+      void chrome.storage.session.remove(PENDING_EXPLAIN_KEY)
+      void send(prompt, { bypassTabBinding: true })
+    })
+  }, [explainTrigger, state, sessionChanging, busy, sessionReady])
+
   // 每次连接重启（设置变更/断线重连）都新建会话。状态消息逐条监听：
   // React 会把 stopped/connecting 等瞬时状态合并进同一帧渲染，依赖渲染
   // 状态无法可靠观察到"连接已重置"，因此在这里按消息粒度判定。
@@ -515,7 +549,7 @@ export function App(): React.JSX.Element {
         setPendingSelection(normalizePendingSelection(stored[PENDING_SELECTION_KEY]))
       })
     })
-    const offSelectionAsk = api.onSelectionAsk((sessionId) => { void focusSession(sessionId) })
+    const offSelectionAsk = api.onSelectionAsk(() => { setExplainTrigger((n) => n + 1) })
     void api.requestStatus().catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : String(cause))
     })
@@ -848,31 +882,6 @@ export function App(): React.JSX.Element {
     }
   }
 
-  /** Switch the panel to the session a selection-ask prompt was sent to. */
-  async function focusSession(sessionId: string): Promise<void> {
-    if (sessionChangingRef.current || sessionRef.current === sessionId) return
-    const transition = beginSessionTransition()
-    let history: HistoryPage | undefined
-    let historyError: unknown
-    try {
-      try {
-        history = await readHistory(sessionId)
-      } catch (cause) {
-        historyError = cause
-      }
-      if (sessionTransitionRef.current !== transition) return
-      const runtime = sessionRuntimeRef.current.snapshot(sessionId)
-      prepareSessionSwitch(runtime.running, runtime.questions)
-      sessionRef.current = sessionId
-      await api.setActiveSession(sessionId)
-      setSessionTitle(sessionId)
-      if (history !== undefined) applyHistory(sessionId, history)
-      else setError(historyError instanceof Error ? historyError.message : String(historyError))
-    } finally {
-      finishSessionTransition(transition)
-    }
-  }
-
   /** Drop the quoted-selection chip and its storage stash. */
   function clearPendingSelection(): void {
     setPendingSelection(null)
@@ -949,15 +958,20 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function send(textOverride?: string): Promise<void> {
+  /** Synchronous send guards (state plus the refs React state hasn't caught up on). */
+  function canSendNow(): boolean {
+    return !busy && !addingImagesRef.current && !sendingRef.current
+      && !sessionChangingRef.current && sessionRef.current !== null
+  }
+
+  async function send(textOverride?: string, options?: { bypassTabBinding?: boolean }): Promise<void> {
     // 建议按钮（textOverride）不带引用选文；普通输入发送时附带当前 chip。
     const quoted = textOverride === undefined ? pendingSelection : null
     const text = (textOverride ?? input).trim()
     const submittedImages = textOverride === undefined ? draftImages : []
     const id = sessionRef.current
     // busy state 是异步的：连续回车可能都通过 state 检查——用 ref 同步锁。
-    if ((text === '' && submittedImages.length === 0)
-      || busy || addingImagesRef.current || sendingRef.current || sessionChangingRef.current || id === null) return
+    if ((text === '' && submittedImages.length === 0) || !canSendNow()) return
     sendingRef.current = true
     const submittedDraft: ComposerDraft<DraftImage> = { text, images: submittedImages }
     if (textOverride === undefined) {
@@ -979,7 +993,7 @@ export function App(): React.JSX.Element {
           submittedImages,
         ),
         ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
-      }, { bypassTabBinding: quoted !== null })
+      }, { bypassTabBinding: quoted !== null || options?.bypassTabBinding === true })
       if (quoted !== null) clearPendingSelection()
     } catch (cause) {
       if (sessionRef.current === id) {

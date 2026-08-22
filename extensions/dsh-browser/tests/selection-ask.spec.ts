@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildExplainPrompt,
   buildQuotedPrompt,
+  PENDING_EXPLAIN_KEY,
   PENDING_SELECTION_KEY,
   quoteBlock,
   SELECTION_MAX_CHARS,
@@ -72,5 +73,9 @@ describe('buildQuotedPrompt', () => {
 describe('constants', () => {
   it('uses a distinct storage key for the stashed selection', () => {
     expect(PENDING_SELECTION_KEY).toBe('dshPendingSelection')
+  })
+
+  it('uses a distinct storage key for the stashed explain prompt', () => {
+    expect(PENDING_EXPLAIN_KEY).toBe('dshPendingExplain')
   })
 })

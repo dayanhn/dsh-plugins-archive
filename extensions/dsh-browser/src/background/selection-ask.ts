@@ -23,6 +23,15 @@ export const SELECTION_MAX_CHARS = 20_000
 /** `chrome.storage.session` key holding the stashed selection awaiting a question. */
 export const PENDING_SELECTION_KEY = 'dshPendingSelection'
 
+/**
+ * `chrome.storage.session` key holding the explain prompt handed to the panel.
+ * Storage (not the port message) is the handoff: the panel may not have its
+ * React listeners mounted when the message arrives. The panel sends the
+ * prompt itself once a session is ready, so the answer streams like any
+ * normal chat turn.
+ */
+export const PENDING_EXPLAIN_KEY = 'dshPendingExplain'
+
 /** Context-menu item ids (one extension's context menu space). */
 export const MENU_EXPLAIN_ID = 'dsh-ask-selection-explain'
 export const MENU_WITH_SELECTION_ID = 'dsh-ask-selection-with-selection'
@@ -31,6 +40,12 @@ export const MENU_WITH_SELECTION_ID = 'dsh-ask-selection-with-selection'
 export interface PendingSelection {
   text: string
   url: string
+  savedAt: number
+}
+
+/** The explain prompt awaiting the panel's send. */
+export interface PendingExplain {
+  prompt: string
   savedAt: number
 }
 
@@ -97,12 +112,6 @@ export interface SelectionAskDeps {
   openPanel: (windowId: number) => void
   /** Resolve true once the bridge is connected, false when the timeout elapses. */
   waitBridgeConnected: (timeoutMs: number) => Promise<boolean>
-  /** The session the panel used most recently, if any. */
-  recentSessionId: () => string | null
-  /** Remember a session as this browser's current one. */
-  rememberSession: (sessionId: string) => void
-  /** One unary gateway RPC straight to the bridge (no tab-binding preparation). */
-  rpc: (method: string, payload: unknown) => Promise<unknown>
   /** Post a message to every open panel port; no-op when none are open. */
   broadcastToPanel: (message: unknown) => void
   /** Show a user notification (title, body). */
@@ -150,18 +159,15 @@ export function initSelectionAsk(deps: SelectionAskDeps): void {
         )
         return
       }
-      let sessionId = deps.recentSessionId()
-      if (sessionId === null) {
-        const created = await deps.rpc('session.create', {}) as { sessionId: string }
-        sessionId = created.sessionId
-        deps.rememberSession(sessionId)
+      // Hand the prompt to the panel through storage: the panel owns the
+      // session (auto-resume or create) and sends it itself once ready, so
+      // the answer streams instead of arriving as a history snapshot.
+      const pending: PendingExplain = {
+        prompt: buildExplainPrompt(selection, url, locale),
+        savedAt: Date.now(),
       }
-      await deps.rpc('session.prompt', {
-        sessionId,
-        mode: 'queue',
-        content: [{ type: 'text', text: buildExplainPrompt(selection, url, locale) }],
-      })
-      deps.broadcastToPanel({ type: 'selection-ask', kind: 'explain', sessionId })
+      await chrome.storage.session.set({ [PENDING_EXPLAIN_KEY]: pending })
+      deps.broadcastToPanel({ type: 'selection-ask' })
     }).catch((error: unknown) => {
       deps.notify(
         titleFor('发送到 dsh 失败', 'Failed to ask dsh'),

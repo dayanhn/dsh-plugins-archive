@@ -1120,9 +1120,6 @@ function openAssistantPanel(windowId?: number): void {
 initSelectionAsk({
   openPanel: (windowId) => openAssistantPanel(windowId),
   waitBridgeConnected,
-  recentSessionId: () => recentSession.current(),
-  rememberSession: (sessionId) => { void recentSession.ready.then(() => recentSession.remember(sessionId)) },
-  rpc: gatewayRpc,
   broadcastToPanel,
   notify: notifySelection,
 })

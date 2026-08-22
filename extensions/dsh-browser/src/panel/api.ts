@@ -81,11 +81,9 @@ interface SelectionPendingMessage {
   type: 'selection-pending'
 }
 
-/** The "explain selection" prompt was sent; show that session. */
+/** Trigger: an explain prompt may be stashed in session storage — re-read it. */
 interface SelectionAskMessage {
   type: 'selection-ask'
-  kind: 'explain'
-  sessionId: string
 }
 
 type BackgroundMessage = RpcResultMessage | RespondResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SessionResumeHintMessage | SelectionPendingMessage | SelectionAskMessage
@@ -126,7 +124,7 @@ export interface PanelApi {
   onTabAffinity(callback: (state: TabAffinityState) => void): () => void
   onSessionResumeHint(callback: (sessionId: string | null) => void): () => void
   onSelectionPending(callback: () => void): () => void
-  onSelectionAsk(callback: (sessionId: string) => void): () => void
+  onSelectionAsk(callback: () => void): () => void
   respondToApproval(id: string, decision: ApprovalDecision): Promise<void>
   resolveTabAffinity(revision: number, decision: TabAffinityDecision, sessionId: string | null): Promise<void>
   rebindTabAffinity(): Promise<void>
@@ -154,7 +152,7 @@ export function connectPanel(): PanelApi {
   const tabAffinityListeners = new Set<(state: TabAffinityState) => void>()
   const sessionResumeHintListeners = new Set<(sessionId: string | null) => void>()
   const selectionPendingListeners = new Set<() => void>()
-  const selectionAskListeners = new Set<(sessionId: string) => void>()
+  const selectionAskListeners = new Set<() => void>()
 
   let port: chrome.runtime.Port | null = null
   let reconnectPromise: Promise<chrome.runtime.Port> | null = null
@@ -220,7 +218,7 @@ export function connectPanel(): PanelApi {
         for (const listener of selectionPendingListeners) listener()
         break
       case 'selection-ask':
-        for (const listener of selectionAskListeners) listener(msg.sessionId)
+        for (const listener of selectionAskListeners) listener()
         break
     }
   }
