@@ -29,6 +29,8 @@ export interface SessionEventView {
     name?: string
     arguments?: string
     title?: unknown
+    /** `assistant/chunk` payload: the raw StreamChunk (only text deltas are rendered). */
+    chunk?: { type?: string; text?: string }
   }
 }
 
@@ -176,6 +178,40 @@ export function toolSummary(name: string, argsJson: unknown, locale: UiLocale = 
     // 模型参数不可解析：只显示工具名。
   }
   return summary
+}
+
+/**
+ * 流式增量：把 text-delta 追加到进行中的 assistant 行（status 'running'），
+ * 没有则新开一行。复用 'running' 状态：进度指示器以"最后一行是否在运行"
+ * 为条件，文本增长期间指示器自动隐藏。
+ */
+export function appendChunkDelta(rows: Row[], text: string, seq: number): Row[] {
+  const last = rows[rows.length - 1]
+  if (last !== undefined && last.kind === 'assistant' && last.status === 'running') {
+    return [...rows.slice(0, -1), { ...last, text: last.text + text }]
+  }
+  return [...rows, { seq, kind: 'assistant', text, status: 'running' }]
+}
+
+/**
+ * 完成的消息行并入 live 行：最终 assistant/message 取代它的流式前缀行
+ * （内容相同或更完整），其余类型按常规追加。
+ */
+export function mergeIncomingRow(rows: Row[], row: Row, seq: number): Row[] {
+  if (row.kind === 'assistant') {
+    const last = rows[rows.length - 1]
+    if (last !== undefined && last.kind === 'assistant' && last.status === 'running') {
+      return [...rows.slice(0, -1), { ...row, seq }]
+    }
+  }
+  return appendLiveRow(rows, row.kind, row.text, seq, row.images)
+}
+
+/** 收尾最后一行进行中的 assistant 行（工具调用紧随其后时）。 */
+export function settleStreamingRow(rows: Row[]): Row[] {
+  const last = rows[rows.length - 1]
+  if (last === undefined || last.kind !== 'assistant' || last.status !== 'running') return rows
+  return [...rows.slice(0, -1), { ...last, status: undefined }]
 }
 
 /** live 合并：若最后一行是工具行则并入（连续工具调用不刷屏），否则新增一行。 */

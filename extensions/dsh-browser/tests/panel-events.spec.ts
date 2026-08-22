@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import {
+  appendChunkDelta,
   appendLiveRow,
   completeLastTool,
   mergeHistoryRows,
+  mergeIncomingRow,
   pendingQuestionFromFrame,
   resolvedQuestionFromFrame,
   rowFromEvent,
+  settleStreamingRow,
   textFromBlocks,
   toolSummary,
   type SessionEventView,
@@ -106,6 +109,53 @@ describe('appendLiveRow / completeLastTool', () => {
     expect(rows[1]).toMatchObject({ text: '读取页面 → 点击元素 #7 → 填写内容 #9', status: 'complete' })
     rows = appendLiveRow(rows, 'assistant', '完成', 6)
     expect(rows.map((r) => r.kind)).toEqual(['user', 'tool', 'assistant'])
+  })
+})
+
+describe('appendChunkDelta / mergeIncomingRow / settleStreamingRow', () => {
+  it('starts a streaming row on the first delta and extends it on the next', () => {
+    let rows: ReturnType<typeof appendChunkDelta> = []
+    rows = appendChunkDelta(rows, '你好', 1)
+    expect(rows).toEqual([{ seq: 1, kind: 'assistant', text: '你好', status: 'running' }])
+    rows = appendChunkDelta(rows, '，世界', 2)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ text: '你好，世界', status: 'running' })
+  })
+
+  it('opens a fresh streaming row after a tool row (new step)', () => {
+    let rows: ReturnType<typeof appendChunkDelta> = []
+    rows = appendChunkDelta(rows, '先看页面', 1)
+    rows = appendLiveRow(rows, 'tool', '读取页面', 2)
+    rows = appendChunkDelta(rows, '已经看完', 3)
+    expect(rows.map((r) => r.kind)).toEqual(['assistant', 'tool', 'assistant'])
+    expect(rows[2]).toMatchObject({ text: '已经看完', status: 'running' })
+  })
+
+  it('mergeIncomingRow replaces the streaming prefix with the final message', () => {
+    let rows: ReturnType<typeof appendChunkDelta> = []
+    rows = appendChunkDelta(rows, '你好', 1)
+    rows = appendChunkDelta(rows, '，世界', 2)
+    rows = mergeIncomingRow(rows, { seq: 0, kind: 'assistant', text: '你好，世界' }, 3)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toEqual({ seq: 3, kind: 'assistant', text: '你好，世界' })
+  })
+
+  it('mergeIncomingRow appends user rows and assistant rows without a streaming prefix', () => {
+    let rows: ReturnType<typeof appendChunkDelta> = []
+    rows = appendLiveRow(rows, 'assistant', '上一轮回答', 1)
+    rows = mergeIncomingRow(rows, { seq: 0, kind: 'user', text: '新问题' }, 2)
+    rows = mergeIncomingRow(rows, { seq: 0, kind: 'assistant', text: '新回答' }, 3)
+    expect(rows.map((r) => r.text)).toEqual(['上一轮回答', '新问题', '新回答'])
+  })
+
+  it('settleStreamingRow finalizes only a trailing streaming assistant row', () => {
+    let rows: ReturnType<typeof appendChunkDelta> = []
+    rows = appendChunkDelta(rows, '流式中', 1)
+    rows = settleStreamingRow(rows)
+    expect(rows[0]).toEqual({ seq: 1, kind: 'assistant', text: '流式中', status: undefined })
+    // 非流式结尾原样返回
+    const settled = settleStreamingRow(rows)
+    expect(settled).toBe(rows)
   })
 })
 

@@ -67,9 +67,12 @@ import {
 
 /** One rendered conversation row. */
 import {
+  appendChunkDelta,
   appendLiveRow,
   completeLastTool,
   mergeHistoryRows,
+  mergeIncomingRow,
+  settleStreamingRow,
   pendingQuestionFromFrame,
   resolvedQuestionFromFrame,
   rowFromEvent,
@@ -660,15 +663,23 @@ export function App(): React.JSX.Element {
       return
     }
     if (payload.sessionId !== sessionRef.current) return
+    if (payload.event.type === 'assistant/chunk') {
+      // 只渲染正文增量；reasoning-delta 由"正在思考"指示器表达。
+      const delta = payload.event.data?.chunk
+      const text = delta?.type === 'text-delta' && typeof delta.text === 'string' ? delta.text : null
+      if (text === null) return
+      setRows((prev) => appendChunkDelta(prev, text, nextSeq()))
+      return
+    }
     const row = rowFromEvent(payload.event)
     if (row !== null) {
-      setRows((prev) => appendLiveRow(prev, row.kind, row.text, nextSeq(), row.images))
+      setRows((prev) => mergeIncomingRow(prev, row, nextSeq()))
       return
     }
     if (payload.event.type === 'tool/call') {
       setWorking(true)
       const summary = toolSummary(payload.event.data?.name ?? 'tool', payload.event.data?.arguments, locale)
-      setRows((prev) => appendLiveRow(prev, 'tool', summary, nextSeq()))
+      setRows((prev) => appendLiveRow(settleStreamingRow(prev), 'tool', summary, nextSeq()))
       return
     }
     if (payload.event.type === 'tool/result') {
