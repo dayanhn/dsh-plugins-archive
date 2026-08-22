@@ -135,6 +135,7 @@ export interface PanelCopy {
     connectedPlaceholder: string
     disconnectedPlaceholder: string
     composerHelp: string
+    scrollToLatest: string
     sendMessage: string
     stopTurn: string
     stoppingTurn: string
@@ -312,6 +313,7 @@ const EN: PanelCopy = {
     connectedPlaceholder: 'Tell me what you want to do on this page…',
     disconnectedPlaceholder: 'Connect to dsh to get started',
     composerHelp: 'Enter to send · Shift + Enter for a new line',
+    scrollToLatest: 'Scroll to latest',
     sendMessage: 'Send message',
     stopTurn: 'Stop generating',
     stoppingTurn: 'Stopping…',
@@ -489,6 +491,7 @@ const ZH: PanelCopy = {
     connectedPlaceholder: '告诉我想在这个页面做什么…',
     disconnectedPlaceholder: '连接 dsh 后即可开始',
     composerHelp: 'Enter 发送 · Shift + Enter 换行',
+    scrollToLatest: '滚动到最新',
     sendMessage: '发送消息',
     stopTurn: '停止生成',
     stoppingTurn: '正在停止…',

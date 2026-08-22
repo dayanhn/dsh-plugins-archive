@@ -82,6 +82,7 @@ import {
   type ResolvedQuestion,
   type SessionEventView,
 } from './events.ts'
+import { isNearBottom } from './scroll.ts'
 
 function normalizeWebOrigin(value: string): string | null {
   return normalizeTrustedOrigin(value) ?? null
@@ -375,6 +376,8 @@ export function App(): React.JSX.Element {
   const [rows, setRows] = useState<Row[]>([])
   const [draft, setDraft] = useState<ComposerDraft<DraftImage>>(() => emptyComposerDraft())
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
+  /** Follow new content only while the user sits near the bottom. */
+  const [stickToBottom, setStickToBottom] = useState(true)
   /** Bumped when an explain prompt may be stashed in session storage. */
   const [explainTrigger, setExplainTrigger] = useState(0)
   const input = draft.text
@@ -576,10 +579,18 @@ export function App(): React.JSX.Element {
     if (sessionId !== undefined && queuedApproval !== undefined) void focusApprovalSession(queuedApproval)
   }, [queuedApproval?.id, queuedApproval?.sessionId, sessionChanging, state])
 
-  // Auto-scroll to the newest row.
+  // 智能跟随：仅当用户"贴底"时新内容才拉动视图；用户上滚阅读即放手，
+  // 由"回到最新"按钮重新接管。
   useEffect(() => {
+    if (!stickToBottom) return
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [rows, working])
+  }, [rows, working, stickToBottom])
+
+  function handleMessagesScroll(): void {
+    const el = scrollRef.current
+    if (el === null) return
+    setStickToBottom(isNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight))
+  }
 
   function applyImageProjection(sessionId: string, seq: number, value: unknown): void {
     if (sessionRef.current !== sessionId || !Number.isSafeInteger(seq)) return
@@ -802,6 +813,7 @@ export function App(): React.JSX.Element {
             await api.setActiveSession(id)
             setSessionTitle(entry === undefined ? null : projectedSessionTitle(entry) ?? sessionDisplayTitle(entry))
             applyHistory(id, history)
+            setStickToBottom(true)
             return
           } catch {
             // Stale hints are expected after a bridge restart; try the next durable session.
@@ -857,6 +869,7 @@ export function App(): React.JSX.Element {
       sessionRef.current = entry.sessionId
       setSessionTitle(projectedSessionTitle(entry) ?? sessionDisplayTitle(entry))
       await refreshHistory(entry.sessionId)
+      setStickToBottom(true)
     } catch (cause) {
       if (sessionTransitionRef.current === transition) {
         setError(cause instanceof Error ? cause.message : String(cause))
@@ -886,6 +899,7 @@ export function App(): React.JSX.Element {
       sessionRef.current = sessionId
       await api.setActiveSession(sessionId)
       setSessionTitle(sessionId)
+      setStickToBottom(true)
       if (history !== undefined) applyHistory(sessionId, history)
       else setError(historyError instanceof Error ? historyError.message : String(historyError))
     } finally {
@@ -983,6 +997,8 @@ export function App(): React.JSX.Element {
     const id = sessionRef.current
     // busy state 是异步的：连续回车可能都通过 state 检查——用 ref 同步锁。
     if ((text === '' && submittedImages.length === 0) || !canSendNow()) return
+    // 新消息总是从对话最新处开始看。
+    setStickToBottom(true)
     sendingRef.current = true
     const submittedDraft: ComposerDraft<DraftImage> = { text, images: submittedImages }
     if (textOverride === undefined) {
@@ -1267,7 +1283,8 @@ export function App(): React.JSX.Element {
               )}
         </section>
       )}
-      <div className="messages" ref={scrollRef}>
+      <div className="messages-wrap">
+        <div className="messages" ref={scrollRef} onScroll={handleMessagesScroll}>
         {rows.length === 0 && !working && (
           <div className="empty">
             <span className="empty-logo"><img src={whaleUrl} alt="" /></span>
@@ -1295,6 +1312,16 @@ export function App(): React.JSX.Element {
             <span className="progress-dots" aria-hidden="true"><i /><i /><i /></span>
             <span>{rows[rows.length - 1]?.kind === 'tool' ? copy.app.organizingResults : copy.app.thinking}</span>
           </div>
+        )}
+        </div>
+        {!stickToBottom && (
+          <button
+            type="button"
+            className="scroll-latest"
+            aria-label={copy.app.scrollToLatest}
+            title={copy.app.scrollToLatest}
+            onClick={() => setStickToBottom(true)}
+          >↓</button>
         )}
       </div>
       {question !== null && (
