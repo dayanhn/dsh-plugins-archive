@@ -2691,12 +2691,37 @@ function buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, ge
 			if (!isWithin(cwd, path)) throw new SidebarError("fs-error", "path outside the session working directory", 403);
 			const info = await stat(path);
 			if (!info.isFile()) throw new SidebarError("fs-error", "not a file", 400);
+			// Headless host (server instance without a display): spawning the
+			// desktop opener would "succeed" into the void. The client sees the
+			// fs-headless code and falls back to the local machine's dsh-remote
+			// bridge, which fetches the file over SFTP and opens it locally.
+			if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) throw new SidebarError("fs-headless", "headless host", 503);
 			const child = spawnDesktopOpen(path);
 			// Swallow the async spawn failure (opener died after launch): the
 			// response is already sent fire-and-forget; nothing else can reach
 			// this child handle.
 			child.on("error", () => {});
 			child.unref();
+			return { ok: true };
+		},
+		/** Delete a file or directory below the session working directory.
+		*  The confirmation dialog lives in the client; the fence here is the
+		*  cwd prefix (the cwd itself is never deletable). */
+		"fs.delete": async (payload) => {
+			const { cwd } = cwdOf(payload);
+			const path = requireAbsolute(requireString(payload, "path"));
+			if (path === cwd || !isWithin(cwd, path)) throw new SidebarError("fs-error", "path outside the session working directory", 403);
+			let info;
+			try {
+				info = await stat(path);
+			} catch {
+				throw new SidebarError("fs-error", `not found: ${path}`, 404);
+			}
+			try {
+				await rm(path, { recursive: info.isDirectory() });
+			} catch (error) {
+				throw new SidebarError("fs-error", `cannot delete "${path}": ${error instanceof Error ? error.message : String(error)}`, 400);
+			}
 			return { ok: true };
 		},
 		"git.status": async (payload) => {

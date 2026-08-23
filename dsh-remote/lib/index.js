@@ -2072,6 +2072,25 @@ export async function apply(ctx, config) {
     if (st.size > cap) return { error: `file is ${st.size} bytes (over the ${cap} open cap)` }
     return { sftp, p, st }
   }
+  // The /open endpoint is also called cross-origin: a headless remote
+  // instance's sidebar page, viewed in the user's browser through a tunnel or
+  // intranet address, posts to the local instance's bridge. Only loopback and
+  // private-network origins may drive it — a public web page must not be able
+  // to fetch remote files through the bridge. (Chrome enforces this with
+  // Private Network Access anyway; Firefox does not.)
+  const privateOriginAllowed = (origin) => {
+    try {
+      const host = new URL(origin).hostname
+      if (host === 'localhost' || host.startsWith('127.')) return true
+      const m = host.match(/^(\d+)\.(\d+)/)
+      if (!m) return false
+      const a = Number(m[1])
+      const b = Number(m[2])
+      return a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)
+    } catch {
+      return false
+    }
+  }
 
   // ── route helpers ─────────────────────────────────────────────────────────
   const routes = [
@@ -2414,7 +2433,21 @@ export async function apply(ctx, config) {
       kind: 'exact',
       path: '/dsh-remote/open',
       handler: async (req, res) => {
+        const origin = req.headers.origin
+        const allowed = origin ? privateOriginAllowed(origin) : true
+        if (origin) res.setHeader('Vary', 'Origin')
+        if (allowed) {
+          res.setHeader('Access-Control-Allow-Origin', origin || '*')
+          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+          res.setHeader('Access-Control-Allow-Headers', 'content-type')
+        }
+        if (req.method === 'OPTIONS') {
+          res.statusCode = allowed ? 204 : 403
+          res.end()
+          return
+        }
         if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' })
+        if (!allowed) return sendJson(res, 403, { ok: false, error: 'origin not allowed' })
         try {
           const body = JSON.parse(String(await readBody(req)) || '{}')
           const got = await requireWorkspaceFile(body.path)

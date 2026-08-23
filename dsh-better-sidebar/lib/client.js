@@ -1567,6 +1567,11 @@ window.__ModuleLoader__.load({
 			openInBrowserTab: "在浏览器新标签页打开",
 			openWithApp: "用外部应用打开",
 			openAppError: "打开失败",
+			localOpenUnreachable: "无法连接本机 dsh 实例（127.0.0.1:3080），请确认本机 dsh 已启动",
+			delete: "删除",
+			deleteConfirm: "确认删除文件 {path} ？此操作不可撤销。",
+			deleteConfirmDir: "确认删除目录 {path} 及其中的全部内容？此操作不可撤销。",
+			deleteError: "删除失败",
 			popupBlocked: "浏览器拦截了新标签页（弹窗被阻止）。已改为在侧边打开；如需全屏查看，请在地址栏允许本站弹窗后重试。",
 			newTab: "新建标签页",
 			openExplorer: "资源管理器",
@@ -1827,6 +1832,11 @@ window.__ModuleLoader__.load({
 			openInBrowserTab: "Open in Browser Tab",
 			openWithApp: "Open with External App",
 			openAppError: "Failed to open",
+			localOpenUnreachable: "Cannot reach the local dsh instance (127.0.0.1:3080); make sure it is running",
+			delete: "Delete",
+			deleteConfirm: "Delete file {path}? This cannot be undone.",
+			deleteConfirmDir: "Delete directory {path} and everything inside it? This cannot be undone.",
+			deleteError: "Delete failed",
 			popupBlocked: "The browser blocked the new tab (popups are blocked). Opened in the sidebar instead; allow popups for this site to view full-page.",
 			newTab: "New tab",
 			openExplorer: "Explorer",
@@ -2641,6 +2651,9 @@ window.__ModuleLoader__.load({
 			/** Open the file in the OS default application (host launches it —
 			*  the browser cannot start desktop apps). */
 			fsOpen: (scope, path) => call("fs.open", scopePayload(scope, { path })),
+			/** Delete a file or directory below the session cwd. The client
+			*  confirms with the user before calling; the host fences on cwd. */
+			fsDelete: (scope, path) => call("fs.delete", scopePayload(scope, { path })),
 			gitStatus: (scope, signal) => call("git.status", scopePayload(scope, {}), signal),
 			gitDiff: (scope, path, staged, signal) => call("git.diff", scopePayload(scope, {
 				...path !== void 0 ? { path } : {},
@@ -2822,8 +2835,13 @@ window.__ModuleLoader__.load({
 		}
 		/** How long the row's "copied" label stays after a successful write. */
 		const COPIED_MS = 1200;
+		/** The local machine's dsh instance, reached by the browser when this
+		*  host has no display: its dsh-remote bridge fetches the file over
+		*  SFTP and opens it on the desktop. Cross-origin (the page is served
+		*  by the headless host), so that endpoint answers CORS. */
+		const LOCAL_DSH_REMOTE_OPEN = "http://127.0.0.1:3080/dsh-remote/open";
 		function FileTree(props) {
-			const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick } = props;
+			const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onDeleted } = props;
 			const [data, setData] = (0, react.useState)({});
 			const dataRef = (0, react.useRef)(data);
 			/** The row whose path was just copied ("copied" label replaces its button). */
@@ -3074,6 +3092,11 @@ window.__ModuleLoader__.load({
 							id: "absolute",
 							label: t("copyAbsolute"),
 							icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCopyOutline16, { size: 14 })
+						},
+						{
+							id: "delete",
+							label: t("delete"),
+							icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, { size: 14 })
 						}
 					],
 					onSelect: (id) => {
@@ -3105,11 +3128,47 @@ window.__ModuleLoader__.load({
 							return;
 						}
 						if (id === "open-app") {
+							// Host-side launch first. A headless host (remote-server
+							// instance, no display) answers fs-headless; then open
+							// through the local machine's dsh instance — its
+							// dsh-remote bridge fetches the file over SFTP and
+							// launches the desktop app locally.
 							api.fsOpen({
 								sessionId,
 								cwd
-							}, target.path).catch((reason) => {
+							}, target.path).catch(async (reason) => {
+								if (reason instanceof SidebarApiError && reason.code === "fs-headless") {
+									try {
+										const resp = await fetch(LOCAL_DSH_REMOTE_OPEN, {
+											method: "POST",
+											headers: { "content-type": "application/json" },
+											body: JSON.stringify({ path: target.path })
+										});
+										const parsed = await resp.json().catch(() => null);
+										if (resp.ok && parsed?.ok === true) return;
+										window.alert(`${t("openAppError")}: ${parsed?.error ?? `HTTP ${resp.status}`}`);
+										return;
+									} catch (localError) {
+										window.alert(`${t("openAppError")}: ${t("localOpenUnreachable")}`);
+										return;
+									}
+								}
 								window.alert(`${t("openAppError")}: ${reason instanceof Error ? reason.message : String(reason)}`);
+							});
+							return;
+						}
+						if (id === "delete") {
+							// Destructive on the host's real filesystem (shared
+							// disks included): always confirm, naming the path.
+							const isDir = target.isDir === true;
+							if (!window.confirm(t(isDir ? "deleteConfirmDir" : "deleteConfirm", { path: target.path }))) return;
+							api.fsDelete({
+								sessionId,
+								cwd
+							}, target.path).then(() => {
+								onDeleted?.();
+							}).catch((reason) => {
+								window.alert(`${t("deleteError")}: ${reason instanceof Error ? reason.message : String(reason)}`);
 							});
 							return;
 						}
@@ -3204,7 +3263,10 @@ window.__ModuleLoader__.load({
 					onOpenFileNewTab,
 					onOpenFileSide,
 					onReferenceFile,
-					refreshTick
+					refreshTick,
+					onDeleted: () => {
+						setRefreshTick((tick) => tick + 1);
+					}
 				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: sidebar_module_css_default.explorerBody,
 					children: [
