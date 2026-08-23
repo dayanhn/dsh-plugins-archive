@@ -22,7 +22,7 @@ DeepSeek Harness（dsh）web 环境使用的三个插件定制 fork，集中归�
 
 | 目录 | 上游 | 基线 → HEAD | 一句话定位 |
 |---|---|---|---|
-| `dsh-remote/` | [flymysql/dsh-remote](https://github.com/flymysql/dsh-remote) | `988629b` (npm 0.8.7) → `02333b1` | SSH 远程工作区：agent 的文件/命令操作发生在远端机器 |
+| `dsh-remote/` | [flymysql/dsh-remote](https://github.com/flymysql/dsh-remote) | `988629b` (npm 0.8.7) → `0b408fd` | SSH 远程工作区：agent 的文件/命令操作发生在远端机器 |
 | `dsh-better-sidebar/` | [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) | `f1fcd70` (npm 0.14.0，⚠️ 上游已到 0.15.2) → `5230e3e` | 侧边栏底座：文件/Git/终端/任务/浏览器面板 |
 | `dsh-browser/` | [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) | `cd35bec` (上游 main) → `e20fd48` | 浏览器扩展：dsh 直接操作用户真实浏览器 |
 
@@ -40,10 +40,10 @@ DeepSeek Harness（dsh）web 环境使用的三个插件定制 fork，集中归�
 - `f220802` **SFTP 会话泄漏修复 + 同步提速**：原实现每次调用新开一个 SFTP 子系统通道且从不关闭，远端最终会断开（`unexpected SFTP session termination`）；改为每连接一个缓存会话 + 失败重试。同步新增 readdir-attr 快路径（未变更的重同步 0 次远端 stat）、16 路并行流式传输、BFS 目录遍历、`syncConcurrency` 配置——280 文件/17MB 真机实测：冷 37.0s→6.5s（5.7×），热 11.3s→1.1s（10.4×）
 - `5f71089` **软链接支持**：浏览时链接指向的目录按目录展开；镜像时从不复制链接本身（防止写入跟随链接覆盖目标文件）
 - `3061064` + `6c267c8` **@ 引用**：「远程文件」行悬停出现 @ 按钮，文件/子目录/工作区根（`@.`）均可引用进对话输入框，直接让 agent 处理"那个远端文件"
-- `fc2ae7f` **重启自动恢复**：dsh 实例重启后自动应用上次选择的机器，不再每次显示"未设置远程工作区"要求手动重选
-- `4a3e4c2` **🔀 远程源码 tab**：面向远端仓库的完整 git 面板——仓库自动发现（`find -L`，含软链目录仓库）、分支切换、暂存/取消暂存、提交（Ctrl+Enter）、分页历史（每批 20）、diff 查看（untracked 走 SFTP 读全文 256KB 上限、二进制探测）；所有 git 命令在远端执行
-- `e8c2c76` **远程文件打开**：文件行右键 →「在浏览器新标签页打开」（SFTP 流式 + 文本嗅探，代码/日志满页显示）/「用外部应用打开」（下载到本地 tmp 后由系统默认应用打开，远端 Pptx 直接在本机 WPS 呈现，原文件只读不动）
-- `508dafc` + `02333b1` **右键菜单修复**：菜单因 pane 的 CSS `contain` 包含块偏移到视口外（表现"右键没反应"）；全局 mousedown 关闭器导致菜单项永远点不中；切工作区后旧展开目录盲目重放刷 500；菜单颜色不随主题、无 hover 高亮——全部修复
+- `d6fd153` **重启自动恢复**：dsh 实例重启后自动应用上次选择的机器，不再每次显示"未设置远程工作区"要求手动重选
+- `cc4496f` **🔀 远程源码 tab**：面向远端仓库的完整 git 面板——仓库自动发现（`find -L`，含软链目录仓库）、分支切换、暂存/取消暂存、提交（Ctrl+Enter）、分页历史（每批 20）、diff 查看（untracked 走 SFTP 读全文 256KB 上限、二进制探测）；所有 git 命令在远端执行
+- `66024b1` **远程文件打开**：文件行右键 →「在浏览器新标签页打开」（SFTP 流式 + 文本嗅探，代码/日志满页显示）/「用外部应用打开」（下载到本地 tmp 后由系统默认应用打开，远端 Pptx 直接在本机 WPS 呈现，原文件只读不动）
+- `f869575` + `0b408fd` **右键菜单修复**：菜单因 pane 的 CSS `contain` 包含块偏移到视口外（表现"右键没反应"）；全局 mousedown 关闭器导致菜单项永远点不中；切工作区后旧展开目录盲目重放刷 500；菜单颜色不随主题、无 hover 高亮——全部修复
 
 ### 🗂 dsh-better-sidebar — 侧边栏底座
 
