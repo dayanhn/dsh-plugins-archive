@@ -14,6 +14,9 @@ importers:
       '@deepseek-ai/dsh-client-runtime':
         specifier: ^0.1.0-rc.6
         version: 0.1.0-rc.8(5887f37235ccf3603f57146617a8d26a)
+      '@deepseek-ai/dsh-client-ui-conversation':
+        specifier: ^0.1.0-rc.6
+        version: 0.1.0-rc.8(27a0ee896d3c0a5d3113080013e3d831)
       '@deepseek-ai/dsh-client-ui-workspace':
         specifier: ^0.1.0-rc.6
         version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-client-connection@0.1.0-rc.8)(@deepseek-ai/dsh-client-locale@0.1.0-rc.8(af455eab407be369b228f666edc81507))(@deepseek-ai/dsh-client-runtime@0.1.0-rc.8(5887f37235ccf3603f57146617a8d26a))(@deepseek-ai/dsh-client-ui-conversation@0.1.0-rc.8(27a0ee896d3c0a5d3113080013e3d831))(@deepseek-ai/dsh-client-ui-sidebar@0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-client-locale@0.1.0-rc.8(af455eab407be369b228f666edc81507))(@deepseek-ai/dsh-client-runtime@0.1.0-rc.8(5887f37235ccf3603f57146617a8d26a))(@deepseek-ai/dsh-client-ui-layout@0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-client-runtime@0.1.0-rc.8(5887f37235ccf3603f57146617a8d26a))(@deepseek-ai/dsh-client-ui-theme@0.1.0-rc.8(ca67692fa56f2be2ccc9ee95338d6862))(@deepseek-ai/dsh-invariants@0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.8(@deepseek-ai/cordis@4.0.1))
