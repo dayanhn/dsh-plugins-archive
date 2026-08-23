@@ -13,8 +13,11 @@ DeepSeek Harness（dsh）web 环境使用的三个插件本地定制 fork，集�
 | `dsh-better-sidebar/` | [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) npm 0.14.0（⚠️ 上游已到 0.15.2） | `f1fcd70` | `6b87e9e`→`13467fd`→`5230e3e` | **嵌套仓库识别**（非仓库目录列出子仓库+切换）、文件右键"浏览器新标签页/外部应用"打开、**Office→PDF 预览**（headless LibreOffice+缓存）、文本嗅探 content-type、弹窗拦截兜底 |
 | `dsh-browser/` | [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) main | `cd35bec` | `4e5da38`→`2dfda0b`→`21446f4`→`e20fd48` | 网页右键"用 dsh 解释选中文本"、侧边栏流式输出、智能滚动 |
 
-每个目录的完整提交历史都保留在本仓库中（git subtree 导入），`git log -- <目录>/` 可查。
+每个目录的完整提交历史都保留在本仓库中（git subtree 导入）。**查某个项目的原始历史**：
+`git log --oneline <该项目的 HEAD SHA>`（导入时路径从根改成了前缀，`git log -- <目录>/` 会因路径简化只显示合并点）。
 某项目的全部改动 patch：`git diff <基线提交> -- <目录>/`。
+
+**构建产物不在 git 里**（上游 .gitignore）：dsh-browser 的 `packages/browser/bridge-browser/lib/` 和 `extensions/dsh-browser/dist/` 需从本归档克隆后执行 `cd dsh-browser && pnpm install && pnpm build` 再生成（一条命令同时构建 bridge 插件和扩展）。
 
 ## 本地安装方式（dsh web profile）
 
@@ -31,7 +34,7 @@ pnpm add "@yuxianglin/dsh-bridge-browser@link:<本仓库路径>/dsh-browser/pack
 # 重启 dsh 实例 + 浏览器 F5
 ```
 
-dsh-browser 扩展另需：`pnpm --filter dsh-browser-extension run build` 后把 `extensions/dsh-browser/dist` 拷到 `~/.dsh/browser-extension`，浏览器加载已解压扩展。
+dsh-browser 的插件 `lib/` 与扩展 `dist/` 是构建产物（不在 git 里）：`cd dsh-browser && pnpm install && pnpm build` 一次生成两者；扩展 `dist` 拷到 `~/.dsh/browser-extension` 后在浏览器加载已解压扩展。
 
 ## 更新同步（日常开发在本地工作 fork 里做）
 
