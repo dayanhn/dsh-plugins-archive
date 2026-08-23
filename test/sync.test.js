@@ -4,7 +4,7 @@
 // (fastGet/fastPut, not readFile/writeFile).
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, utimesSync, existsSync, rmSync, readdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, utimesSync, existsSync, rmSync, readdirSync, symlinkSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { syncTree, pushTree, pushOneFile, loadSyncState, saveSyncState } from '../lib/sync.js'
@@ -34,7 +34,11 @@ function makeFakeSftp(initial = {}) {
     const i = p.lastIndexOf('/')
     return i <= 0 ? '' : p.slice(0, i)
   }
-  const attrs = (e) => ({ size: e.size, mtime: e.mtime, isDirectory: () => e.isDir })
+  const addLink = (p, mtime, linkTarget) => {
+    addDir(p.slice(0, p.lastIndexOf('/')))
+    tree.set(p, { isDir: false, isLink: true, linkTarget, size: Buffer.byteLength(linkTarget), mtime, content: '' })
+  }
+  const attrs = (e) => ({ size: e.size, mtime: e.mtime, isDirectory: () => e.isDir, isSymbolicLink: () => !!e.isLink })
 
   return {
     calls,
@@ -43,6 +47,7 @@ function makeFakeSftp(initial = {}) {
     // test mutators
     setRemote(p, mtime, content) { addFile(p, mtime, content) },
     delRemote(p) { tree.delete(p) },
+    addLink,
     // sftp adapter surface used by sync.js
     async readdir(dir) {
       calls.readdir++
@@ -63,7 +68,8 @@ function makeFakeSftp(initial = {}) {
     async stat(p) {
       calls.stat++
       await new Promise((r) => setTimeout(r, 1))
-      const e = tree.get(p.replace(/\/+$/, ''))
+      let e = tree.get(p.replace(/\/+$/, ''))
+      if (e && e.isLink) e = tree.get(e.linkTarget) // stat follows links
       if (!e) throw new Error('no such file: ' + p)
       return { size: e.size, mtime: e.mtime }
     },
@@ -396,6 +402,62 @@ test('parallel transfers: many files across many directories all land', async ()
       }
     }
     assert.equal(readdirSync(local).length, 6)
+  } finally {
+    rmSync(local, { recursive: true, force: true })
+  }
+})
+
+test('symlinks are never mirrored: pull skips them, push refuses to write through them', async () => {
+  const remote = '/data'
+  // Remote tree: a real dir, a real file, and links (dir-target, file-target,
+  // broken). syncTree must pull only the two real files and count the links.
+  const sftp = makeFakeSftp({
+    '/data/real/keep.txt': { mtime: T0, content: 'keep' },
+    '/data/realfile.txt': { mtime: T0, content: 'rf' },
+  })
+  sftp.addLink('/data/linkdir', T0, '/data/real')
+  sftp.addLink('/data/linkfile', T0, '/data/realfile.txt')
+  sftp.addLink('/data/broken', T0, '/data/does-not-exist')
+  const local = localDir()
+  try {
+    const r = await syncTree(sftp, remote, local, { state: {} })
+    assert.equal(r.stats.files, 2) // only the real files
+    assert.equal(r.stats.symlinks, 3)
+    assert.ok(existsSync(localOf(local, 'real/keep.txt')))
+    assert.ok(existsSync(localOf(local, 'realfile.txt')))
+    // No link materialized into the mirror (not a file, not a dir).
+    assert.ok(!existsSync(localOf(local, 'linkdir')))
+    assert.ok(!existsSync(localOf(local, 'linkfile')))
+    assert.ok(!existsSync(localOf(local, 'broken')))
+    assert.deepEqual(Object.keys(r.nextState).sort(), ['real/keep.txt', 'realfile.txt'])
+  } finally {
+    rmSync(local, { recursive: true, force: true })
+  }
+})
+
+test('push refuses a local symlink and a pushOneFile symlink (would clobber the link target)', async () => {
+  const remote = '/data'
+  const sftp = makeFakeSftp({ '/data/target.txt': { mtime: T0, content: 'original-target' } })
+  const local = localDir()
+  try {
+    // Real file + a local symlink pointing at it (relative, like a user might make).
+    writeFileSync(localOf(local, 'target.txt'), 'original-target')
+    alignMtime(localOf(local, 'target.txt'), T0)
+    symlinkSync(localOf(local, 'target.txt'), localOf(local, 'alias.txt'))
+    const state = { 'target.txt': { size: 15, mtime: T0 } }
+
+    // pushTree: the symlink must be counted and skipped, not uploaded.
+    const r = await pushTree(sftp, local, remote, { state })
+    assert.equal(r.stats.files, 0)
+    assert.equal(r.stats.symlinks, 1)
+    assert.equal(sftp.calls.fastPut, 0)
+    assert.ok(!sftp.tree.has('/data/alias.txt')) // no upload through the link
+
+    // pushOneFile on the symlink → skipped with reason.
+    const one = await pushOneFile(sftp, local, remote, 'alias.txt', { state })
+    assert.equal(one.status, 'skipped')
+    assert.equal(one.reason, 'symlink')
+    assert.equal(sftp.tree.get('/data/target.txt').content, 'original-target') // target untouched
   } finally {
     rmSync(local, { recursive: true, force: true })
   }
