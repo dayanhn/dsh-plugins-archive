@@ -3,6 +3,19 @@
 DeepSeek Harness（dsh）web 环境使用的三个插件本地定制 fork，集中归档于此。
 **个人备份/维护用途，非公开分发**（上游均 MIT，公开亦无法律障碍）。
 
+## 来源与许可（重要）
+
+本仓库**不是原创插件**，而是对下列三个 MIT 许可上游项目的 fork + 增量修改。
+所有基础代码版权归原作者，各自的 `LICENSE`（MIT）文件保留在各目录内；
+本仓库新增的改动（下表"定制提交"）在同样的 MIT 许可下发布，并完整署名为上游项目。
+上游项目的文档、issue 与后续更新以其官方仓库为准。
+
+| 目录 | 上游项目（原创） | 原作者/组织 | 许可 | 上游最新版（2026-08-23） |
+|---|---|---|---|---|
+| `dsh-remote/` | [flymysql/dsh-remote](https://github.com/flymysql/dsh-remote) | flymysql | MIT | npm 0.8.7（= 本 fork 基线） |
+| `dsh-better-sidebar/` | [omdsh-dev/DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) | omdsh-dev（huanlin、menghuan1918 等） | MIT | npm 0.15.2（本 fork 基线为 0.14.0） |
+| `dsh-browser/` | [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) | Lum1104 | MIT | main（持续更新中） |
+
 环境基线：dsh `528c682`（2026-08-23），Node 22，pnpm 11.7.0，Linux；Windows 迁移见 `docs/windows-迁移指南.md`。
 
 ## 目录
