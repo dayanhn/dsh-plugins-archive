@@ -2998,9 +2998,13 @@ function apply(ctx, config) {
 				if (!isWithin(cwd, path)) throw new SidebarError("fs-error", "media path outside the session working directory", 403);
 				const info = await stat(path);
 				if (!info.isFile()) throw new SidebarError("fs-error", "not a file or too large", 400);
+				// raw=1: the browser fetches original bytes to hand to the local
+				// opener (headless "open with external app"), not to render
+				// in-page — skip the Office→PDF conversion and the media cap.
+				const serveRaw = url.searchParams.get("raw") === "1";
 				const isOffice = OFFICE_EXTS.has(extname(path).toLowerCase());
-				if (info.size > (isOffice ? OFFICE_SOURCE_LIMIT : resolved.mediaLimit)) throw new SidebarError("fs-error", "not a file or too large", 400);
-				if (isOffice) {
+				if (info.size > (serveRaw || isOffice ? OFFICE_SOURCE_LIMIT : resolved.mediaLimit)) throw new SidebarError("fs-error", "not a file or too large", 400);
+				if (isOffice && !serveRaw) {
 					// Office has no native browser renderer: convert to PDF once
 					// (cached by path+mtime+size) and serve it — the tab shows a
 					// zoomable PDF instead of triggering a download.

@@ -1567,7 +1567,7 @@ window.__ModuleLoader__.load({
 			openInBrowserTab: "在浏览器新标签页打开",
 			openWithApp: "用外部应用打开",
 			openAppError: "打开失败",
-			localOpenUnreachable: "无法连接本机 dsh 实例（127.0.0.1:3080），请确认本机 dsh 已启动",
+			openerFallback: "本机 3900 端口没有开箱器（dsh-open-local.js），文件已改为下载到本机",
 			delete: "删除",
 			deleteConfirm: "确认删除文件 {path} ？此操作不可撤销。",
 			deleteConfirmDir: "确认删除目录 {path} 及其中的全部内容？此操作不可撤销。",
@@ -1832,7 +1832,7 @@ window.__ModuleLoader__.load({
 			openInBrowserTab: "Open in Browser Tab",
 			openWithApp: "Open with External App",
 			openAppError: "Failed to open",
-			localOpenUnreachable: "Cannot reach the local dsh instance (127.0.0.1:3080); make sure it is running",
+			openerFallback: "No local opener (dsh-open-local.js) on port 3900 — the file was downloaded to this machine instead",
 			delete: "Delete",
 			deleteConfirm: "Delete file {path}? This cannot be undone.",
 			deleteConfirmDir: "Delete directory {path} and everything inside it? This cannot be undone.",
@@ -2720,14 +2720,16 @@ window.__ModuleLoader__.load({
 		function downloadUrl(scope, path) {
 			return fileUrl(scope, path, true);
 		}
-		/** Shared URL builder for the /sidebar/file route (media vs download). */
-		function fileUrl(scope, path, download) {
+		/** Shared URL builder for the /sidebar/file route (media vs download;
+		*  raw serves the original bytes, skipping the Office→PDF preview). */
+		function fileUrl(scope, path, download, raw) {
 			const params = new URLSearchParams({
 				sessionId: scope.sessionId,
 				path
 			});
 			if (scope.cwd !== void 0 && scope.cwd !== "") params.set("cwd", scope.cwd);
 			if (download) params.set("download", "1");
+			if (raw) params.set("raw", "1");
 			return `/sidebar/file?${params.toString()}`;
 		}
 		//#endregion
@@ -2835,11 +2837,11 @@ window.__ModuleLoader__.load({
 		}
 		/** How long the row's "copied" label stays after a successful write. */
 		const COPIED_MS = 1200;
-		/** The local machine's dsh instance, reached by the browser when this
-		*  host has no display: its dsh-remote bridge fetches the file over
-		*  SFTP and opens it on the desktop. Cross-origin (the page is served
-		*  by the headless host), so that endpoint answers CORS. */
-		const LOCAL_DSH_REMOTE_OPEN = "http://127.0.0.1:3080/dsh-remote/open";
+		/** The local opener on the VIEWING machine (dsh-open-local.js, loopback
+		*  :3900): receives the file bytes the browser fetched from this headless
+		*  host and launches the desktop default app. Cross-origin, so the opener
+		*  answers CORS for private-network origins only. */
+		const LOCAL_DSH_OPENER = "http://127.0.0.1:3900/open";
 		function FileTree(props) {
 			const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onDeleted } = props;
 			const [data, setData] = (0, react.useState)({});
@@ -3129,31 +3131,53 @@ window.__ModuleLoader__.load({
 						}
 						if (id === "open-app") {
 							// Host-side launch first. A headless host (remote-server
-							// instance, no display) answers fs-headless; then open
-							// through the local machine's dsh instance — its
-							// dsh-remote bridge fetches the file over SFTP and
-							// launches the desktop app locally.
+							// instance, no display) answers fs-headless; then the
+							// browser fetches the original bytes from that host
+							// (same origin; raw=1 skips the Office preview) and
+							// hands them to the viewing machine's local opener,
+							// which writes a temp file and launches the desktop
+							// default app. No opener running → plain download so
+							// the file still lands on this machine.
 							api.fsOpen({
 								sessionId,
 								cwd
 							}, target.path).catch(async (reason) => {
-								if (reason instanceof SidebarApiError && reason.code === "fs-headless") {
-									try {
-										const resp = await fetch(LOCAL_DSH_REMOTE_OPEN, {
-											method: "POST",
-											headers: { "content-type": "application/json" },
-											body: JSON.stringify({ path: target.path })
-										});
+								if (!(reason instanceof SidebarApiError) || reason.code !== "fs-headless") {
+									window.alert(`${t("openAppError")}: ${reason instanceof Error ? reason.message : String(reason)}`);
+									return;
+								}
+								let buf;
+								try {
+									const resp = await fetch(fileUrl({
+										sessionId,
+										cwd
+									}, target.path, true, true));
+									if (!resp.ok) {
 										const parsed = await resp.json().catch(() => null);
-										if (resp.ok && parsed?.ok === true) return;
-										window.alert(`${t("openAppError")}: ${parsed?.error ?? `HTTP ${resp.status}`}`);
-										return;
-									} catch (localError) {
-										window.alert(`${t("openAppError")}: ${t("localOpenUnreachable")}`);
+										window.alert(`${t("openAppError")}: ${parsed?.error?.message ?? `HTTP ${resp.status}`}`);
 										return;
 									}
+									buf = await resp.arrayBuffer();
+								} catch (fetchError) {
+									window.alert(`${t("openAppError")}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+									return;
 								}
-								window.alert(`${t("openAppError")}: ${reason instanceof Error ? reason.message : String(reason)}`);
+								const name = baseName$1(target.path);
+								try {
+									const openerResp = await fetch(`${LOCAL_DSH_OPENER}?filename=${encodeURIComponent(name)}`, {
+										method: "POST",
+										headers: { "content-type": "application/octet-stream" },
+										body: buf
+									});
+									const parsed = await openerResp.json().catch(() => null);
+									if (openerResp.ok && parsed?.ok === true) return;
+									window.alert(`${t("openAppError")}: ${parsed?.error ?? `HTTP ${openerResp.status}`}`);
+								} catch {
+									// The viewing machine has no opener on :3900 —
+									// download the file here instead.
+									downloadFile(target.path);
+									window.alert(t("openerFallback"));
+								}
 							});
 							return;
 						}
