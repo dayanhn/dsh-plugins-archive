@@ -1,0 +1,53 @@
+{
+  "name": "dsh-inference-news",
+  "version": "0.1.0",
+  "description": "Daily LLM-inference news digest for DeepSeek Harness: collects arXiv / HF Daily Papers / 23 GitHub release feeds (vLLM, vLLM-Ascend, SGLang, TensorRT-LLM, llama.cpp, Ollama, Mooncake, LMCache, MindIE, MindSpeed, torch_npu, MindSpore, ...) / tiered RSS blogs / Hacker News, curates via one auxiliary LLM call, writes a Chinese markdown digest. Model tools news_collect / news_digest, /news command, and a sidebar 日报 tab with full-text view + one-click generate.",
+  "license": "MIT",
+  "author": "zzw",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "inference",
+    "news",
+    "daily-digest",
+    "plugin"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib",
+    "test",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

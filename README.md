@@ -2,6 +2,7 @@
 
 DeepSeek Harness（dsh）web 环境使用的三个插件定制 fork，集中归档于此。
 **个人维护的非官方版本**——功能与差异见下文；上游的官方版本与更新以上游仓库为准。
+另含一个**原创插件** `dsh-inference-news/`（大模型推理日报），见文末专节。
 
 ## 来源与许可（重要）
 
@@ -103,6 +104,17 @@ git subtree pull --prefix=dsh-better-sidebar /home/<用户名>/code/tool/dsh-bet
 git subtree pull --prefix=dsh-browser        /home/<用户名>/code/tool/dsh-browser        master --squash=false
 git push
 ```
+
+## 原创插件
+
+### 📰 dsh-inference-news — 大模型推理日报
+
+- **原版插件**（非 fork）：39 个数据源——arXiv（cs.LG/CL/DC/AR）、HF Daily Papers（镜像 API）、23 个 GitHub release 源（vLLM、**vLLM-Ascend**、SGLang、TensorRT-LLM、LMDeploy、TGI、MLC-LLM、llama.cpp、Ollama、LightLLM、NVIDIA Dynamo、Mooncake、LMCache、llm-compressor、DeepSeek-V3；华为昇腾系 **MindIE-LLM / MindIE-Motor / MindSpeed-LLM / torch_npu / CANN 容器镜像 / Triton-Ascend / SGLang-Ascend / MindSpore**）、11 个分级 RSS 博客（vLLM 官方博客、美团技术、Interconnects、HF、NVIDIA Developer + 量子位/InfoQ/OpenAI/Azure/Databricks/NVIDIA 公司博客）、5 组 Hacker News 查询
+- **管线**：确定性采集（并发+重试+源级失败隔离+`https_proxy` 自动/直连回退）→ 推理关键词打分 → seen.json 去重（14 天窗口）→ release 洪水折叠 → 一次辅助 LLM 结构化筛选 → 确定性 Markdown 渲染 → `digests/YYYY-MM-DD.md`
+- **四个使用面**：模型工具 `news_collect`/`news_digest`、`/news` 命令、webServer 路由 `/inference-news/*`、侧边栏「📰 日报」tab（历史列表 + 全文安全渲染 + 一键生成）
+- **安装**：`cd ~/.dsh/profiles/<web|headless> && pnpm add "dsh-inference-news@link:<本仓库路径>/dsh-inference-news"`，并把 `dsh-inference-news` 追加到该 profile `package.json` 的 `dsh.profile.bundles`，重启 dsh 实例
+- **定时**：`0 9 * * * /home/zzw/work/news/news-daily.sh`（headless profile 跑 `news_digest` 工具）
+- 已知限制（out-of-tree 插件无法注册自定义会话事件 → 无聊天流内嵌卡片；GitHub 直连在本机间歇受干扰等）见 `dsh-inference-news/README.md`
 
 ## 文档
 
