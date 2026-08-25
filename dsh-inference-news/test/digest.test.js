@@ -115,6 +115,22 @@ test('curateItems: aborted and empty finishes throw specific errors', async () =
   await assert.rejects(curateItems([], { stream: empty, signal: new AbortController().signal }), /未返回内容/)
 })
 
+test('curateItems: max-tokens finish yields actionable errors (empty vs partial)', async () => {
+  const emptyMaxTokens = async function* () { yield { type: 'finish', reason: { kind: 'max-tokens' } } }
+  await assert.rejects(
+    curateItems([], { stream: emptyMaxTokens, signal: new AbortController().signal }),
+    /推理 token 耗尽|curationReasoningEffort/,
+  )
+  const partialMaxTokens = async function* () {
+    yield { type: 'text-delta', text: '{"headlines": [' }
+    yield { type: 'finish', reason: { kind: 'max-tokens' } }
+  }
+  await assert.rejects(
+    curateItems([], { stream: partialMaxTokens, signal: new AbortController().signal }),
+    /JSON 不完整/,
+  )
+})
+
 test('digestDate / headerDate respect the zone', () => {
   assert.equal(digestDate('Asia/Shanghai', new Date('2026-08-25T01:00:00Z')), '2026-08-25')
   assert.equal(digestDate('UTC', new Date('2026-08-25T01:00:00Z')), '2026-08-25')

@@ -52,6 +52,14 @@ export const Config = z.object({
    * estimate (a 4K budget truncates a 27B thinking model's curation output).
    */
   curationMaxTokens: z.number().step(1).min(1024).max(131072).default(16384),
+  /**
+   * Reasoning effort for the curation call. Curation is a mechanical
+   * extract-and-summarize job: at a deployment's default (e.g. xhigh)
+   * thinking models can spend the entire output budget reasoning and
+   * finish max-tokens with zero JSON. 'off' keeps the budget for the
+   * answer; empty string = do not override (use the deployment default).
+   */
+  curationReasoningEffort: z.string().default('off'),
   /** Slash command name (without the leading slash). */
   commandName: z.string().default('news'),
   /** Cooperative timeout budget for news_digest / the generate endpoint. */
@@ -85,10 +93,12 @@ export async function apply(ctx, config) {
   function llmRoute() {
     const adm = ctx.get('agentDefaultModel')
     const sel = adm && typeof adm.currentSelection === 'function' ? adm.currentSelection() : null
-    return {
+    const route = {
       provider: config.llmProvider || (sel && sel.provider) || 'deepseek-official',
       model: config.llmModel || (sel && sel.model) || 'deepseek-v4-flash',
     }
+    if (config.curationReasoningEffort) route.reasoningEffort = config.curationReasoningEffort
+    return route
   }
   const stream = (opts) => ctx.llm.stream({ ...llmRoute(), ...opts })
 

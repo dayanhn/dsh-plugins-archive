@@ -124,6 +124,13 @@ export async function curateItems(items, { stream, signal, maxTokens = 16384 }) 
     throw new Error('LLM 筛选调用失败：' + (f.message || f.code || JSON.stringify(f)))
   }
   if (finish && finish.kind === 'aborted') throw new Error('LLM 筛选调用被中止')
+  if (finish && finish.kind === 'max-tokens') {
+    throw new Error(
+      text.trim()
+        ? 'LLM 筛选输出达到 max-tokens 上限且 JSON 不完整：调大 curationMaxTokens，或降低 curationReasoningEffort（如 off）让输出预算留给正文'
+        : 'LLM 筛选调用未返回内容：推理 token 耗尽了全部输出预算（finish: max-tokens）。请设置 curationReasoningEffort: off（或更小），或调大 curationMaxTokens',
+    )
+  }
   if (!text.trim()) throw new Error('LLM 筛选调用未返回内容（finish: ' + JSON.stringify(finish) + '）')
   return parseCuration(text)
 }
