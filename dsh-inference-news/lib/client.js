@@ -178,11 +178,16 @@ window.__ModuleLoader__.load({
       }, [])
       React.useEffect(() => { loadList() }, [loadList])
 
-      const openDay = async (date) => {
+      const openDay = async (name) => {
         setBusy('md'); setError('')
         try {
-          const data = await api('GET', '/inference-news/digests/' + date)
-          setView({ date: data.date, markdown: data.markdown })
+          const data = await api('GET', '/inference-news/digests/' + name)
+          setView({
+            label: data.kind === 'full' ? data.date + ' · 全量视图' : data.date,
+            name: data.name,
+            full: data.kind === 'full',
+            markdown: data.markdown,
+          })
         } catch (e) { setError(String(e.message || e)) }
         setBusy('')
       }
@@ -190,22 +195,27 @@ window.__ModuleLoader__.load({
       const generate = async () => {
         setBusy('gen'); setError('')
         try {
-          await api('POST', '/inference-news/generate', {})
+          const data = await api('POST', '/inference-news/generate', {})
           await loadList()
-          const latest = list.length ? list[0].date : ''
-          if (latest) openDay(latest)
+          if (data.name) openDay(data.name)
         } catch (e) { setError(String(e.message || e)) }
         setBusy('')
       }
 
       // Full-window view: collect the chosen window with NO historical dedup,
-      // curate, and display the markdown in-tab. Display-only: the server
-      // neither writes a digest file nor updates seen state.
+      // curate, and display in-tab. Archived to a uniquely-named file
+      // (server-side) so repeated views never clobber each other.
       const fullCollect = async () => {
         setBusy('full'); setError('')
         try {
           const data = await api('POST', '/inference-news/generate', { mode: 'full', ageHours: windowHours })
-          setView({ date: data.scope || ('全量视图 · 近 ' + windowHours + ' 小时'), full: true, markdown: data.markdown })
+          await loadList()
+          setView({
+            label: data.scope || ('全量视图 · 近 ' + windowHours + ' 小时'),
+            name: data.name,
+            full: true,
+            markdown: data.markdown,
+          })
         } catch (e) { setError(String(e.message || e)) }
         setBusy('')
       }
@@ -253,8 +263,8 @@ window.__ModuleLoader__.load({
         !busy && list.length === 0 && !error ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6, lineHeight: 1.6 } }, '还没有日报。点「⚡ 生成今日日报」开始，或等待每日 09:00 的定时任务。') : null,
         list.map((d, idx) =>
           React.createElement('div', {
-            key: d.date,
-            onClick: () => openDay(d.date),
+            key: d.name,
+            onClick: () => openDay(d.name),
             style: {
               padding: '8px 10px',
               marginBottom: 6,
@@ -265,11 +275,11 @@ window.__ModuleLoader__.load({
             },
           },
             React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 12.5, fontWeight: 600 } },
-              React.createElement('span', null, d.date + (idx === 0 ? ' · 今日' : '')),
+              React.createElement('span', null, d.kind === 'full' ? d.date + ' · 全量 ' + d.windowHours + 'h' + (d.at ? ' ' + d.at.slice(0, 2) + ':' + d.at.slice(2, 4) : '') : d.date + (idx === 0 ? ' · 今日' : '')),
               React.createElement('span', { style: { opacity: 0.55, fontWeight: 400 } }, (d.size / 1024).toFixed(1) + ' KB')),
             (d.headlines || []).slice(0, 2).map((h, i) =>
               React.createElement('div', { key: i, style: { fontSize: 11.5, opacity: 0.8, marginTop: 3, lineHeight: 1.45 } }, (i + 1) + '. ' + h)))),
-        (busy === 'gen' || busy === 'full') ? React.createElement('div', { style: { fontSize: 11.5, opacity: 0.6, marginTop: 6, lineHeight: 1.5 } }, busy === 'full' ? '全量采集（不做历史去重）+ LLM 筛选，通常 2–5 分钟…' : '采集 30+ 源 + LLM 筛选，通常 2–5 分钟…') : null)
+        (busy === 'gen' || busy === 'full') ? React.createElement('div', { style: { fontSize: 11.5, opacity: 0.6, marginTop: 6, lineHeight: 1.5 } }, busy === 'full' ? '按所选时间窗全量采集（不去重）+ LLM 筛选，通常 2–5 分钟…' : '采集当天全量（不去重）+ LLM 筛选，通常 2–5 分钟…') : null)
     }
 
     function apply(ctx) {

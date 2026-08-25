@@ -3,14 +3,14 @@
 DeepSeek Harness 插件（原版，非上游 fork）：每天聚合大模型**推理**方向资讯并生成排版美观的中文 Markdown 日报。
 
 - **数据源**（39 个，全部实测可达/可代理）：arXiv（cs.LG/CL/DC/AR）、HF Daily Papers（镜像 API）、23 个 GitHub release 源（vLLM、**vLLM-Ascend**、SGLang、TensorRT-LLM、LMDeploy、TGI、MLC-LLM、llama.cpp、Ollama、LightLLM、NVIDIA Dynamo、Mooncake、LMCache、llm-compressor、DeepSeek-V3；华为昇腾系 **MindIE-LLM / MindIE-Motor / MindSpeed-LLM / torch_npu / CANN 容器镜像 / Triton-Ascend / SGLang-Ascend / MindSpore**）、11 个分级 RSS 博客（专用：vLLM 官方博客、美团技术、Interconnects、HF、NVIDIA Developer；泛：量子位、InfoQ 中文、OpenAI、Azure、Databricks、NVIDIA 公司博客）、5 组 Hacker News 查询
-- **管线**：确定性采集（并发 + 重试（429 加长退避）+ 源级失败隔离 + https_proxy 自动/直连回退）+ web 搜索补充（2 组查询，弥补中文媒体/PR/厂商博客等确定性源覆盖不到的料）→ 推理关键词打分 → seen.json 去重（14 天窗口；**同日并集**：今日日报已含的 URL 重新回到候选池，当天重复生成只增不减）→ 同仓库 release 洪水折叠 → **一次辅助 LLM 调用**（结构化 JSON 筛选，默认走部署默认模型）→ 确定性 Markdown 渲染
+- **管线**：确定性采集（并发 + 重试（429 加长退避）+ 源级失败隔离 + https_proxy 自动/直连回退）+ web 搜索补充（2 组查询，弥补中文媒体/PR/厂商博客等确定性源覆盖不到的料）→ 推理关键词打分 → 同仓库 release 洪水折叠 → **一次辅助 LLM 调用**（结构化 JSON 筛选，默认走部署默认模型）→ 确定性 Markdown 渲染。**两种模式都不做历史去重**（seen.json 只留作历史日志）
 - **两种模式**：
-  - `daily`（默认，cron/日报按钮）：去重 + 同日并集，写 digests/YYYY-MM-DD.md，更新 seen 状态
-  - `full`（按需全量视图）：按所选时间窗**完全不做历史去重**，只采集 + 筛选 + 返回 Markdown——**不落盘、不更新 seen**，看完即弃
+  - `daily`（默认，cron/「⚡ 生成今日日报」）：**当天 00:00 → 现在**的全量，写 digests/YYYY-MM-DD.md（同一天重复调用只增不减），记录 seen 历史
+  - `full`（时间窗选择器 +「🔍 全量」）：按所选时间窗（24h/48h/72h/7 天）全量采集，**存档到唯一文件名** digests/<日期>_full-<窗>h-<时刻>.md（互不覆盖、不更新 seen），tab 内展示
 - **四个使用面**：
   - 模型工具 `news_collect`（只读候选 + 各源状态，零 LLM 成本，可传 ageHours）/ `news_digest`（全流程；`mode: 'daily' | 'full'`、`ageHours`）
   - 人类命令 `/news`（GUI 一键生成日报，无需模型轮次）
-  - webServer JSON 路由 `/inference-news/{digests,digests/<date>,generate}`（generate 接受 `{mode, ageHours}`）
+  - webServer JSON 路由 `/inference-news/{digests,digests/<文件名>,generate}`（列表含全量档案；generate 接受 `{mode, ageHours}`）
   - 侧边栏「📰 日报」tab（经 dsh-better-sidebar 注册 API）：历史列表（日期 + 要点预览）→ 全文渲染（安全 markdown 渲染器，createElement 构建，无 innerHTML）→「⚡ 生成今日日报」（daily）/ 时间窗选择器（24h/48h/72h/7 天）+「🔍 全量」（full，tab 内展示）
 
 ## 安装（web profile，本归档约定）
@@ -31,9 +31,9 @@ headless profile（cron 用）同理：`cd ~/.dsh/profiles/headless && pnpm add 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | outputDir | /home/zzw/work/news/digests | 日报目录（YYYY-MM-DD.md） |
-| stateFile | /home/zzw/work/news/seen.json | 去重状态（14 天窗口，30 天清理） |
+| stateFile | /home/zzw/work/news/seen.json | 采集历史日志（只记录、不参与候选过滤，30 天清理） |
 | cacheFile | /home/zzw/work/news/.cache/candidates.json | 最近一次采集的候选 JSON |
-| ageHours | 72 | 采集回看窗口（小时） |
+| ageHours | 72 | full 模式与 news_collect 的缺省时间窗（小时）；daily 固定为「当天 00:00 → 现在」，不用此值 |
 | maxItems | 120 | 候选上限（前 N 条送筛选） |
 | timezone | Asia/Shanghai | 日报日期时区 |
 | llmProvider / llmModel | 空 | 筛选 LLM 路线；空 = 部署默认（agentDefaultModel.currentSelection） |

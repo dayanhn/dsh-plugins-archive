@@ -22,7 +22,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import path from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { runCollect, recordSeen, normUrl, scoreItem } from './collect.js'
-import { curateItems, renderDigest, writeDigest, digestDate } from './digest.js'
+import { curateItems, renderDigest, writeDigest, digestDate, fullViewName } from './digest.js'
 
 export const name = 'dsh-inference-news'
 
@@ -169,13 +169,27 @@ export async function apply(ctx, config) {
   }
 
   /**
-   * The digest pipeline.
-   * @param mode 'daily' (default): seen-dedup, same-day union (URLs already in
-   *   today's digest re-enter the pool), writes digests/YYYY-MM-DD.md and
-   *   updates seen state. 'full': a display-only window view — no seen
-   *   dedup at all, no file write, no seen update; the markdown comes back
-   *   to the caller (sidebar tab / tool result).
-   * @param ageHours window override (full mode takes the user's choice).
+   * Hours elapsed since local midnight in the configured zone (the "today"
+   * window). Wall-clock arithmetic, no epoch inversion: format now in the
+   * zone and read H:M:S.
+   */
+  function hoursSinceMidnight(now = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: config.timezone, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(now)
+    const g = (type) => Number(parts.find((x) => x.type === type).value)
+    return (g('hour') % 24) + g('minute') / 60 + g('second') / 3600
+  }
+
+  /**
+   * The digest pipeline. Both modes collect the window in full — the seen
+   * history is NEVER used to filter candidates.
+   * @param mode 'daily' (default): the window is TODAY (local midnight ->
+   *   now); writes digests/YYYY-MM-DD.md (same-day rerun overwrites with the
+   *   fuller set) and appends the final URLs to the seen history log.
+   *   'full': the caller's window (ageHours, default the configured
+   *   lookback); archives to a UNIQUE file digests/<date>_full-<H>h-<HHMMSS>.md
+   *   (views never clobber each other or the day's report), returns the
+   *   markdown, and leaves the seen log untouched.
+   * @param ageHours full-mode window override.
    */
   async function runDigest({ signal, mode = 'daily', ageHours } = {}) {
     if (generating) throw new Error('日报正在生成中，请稍候再试')
@@ -183,29 +197,30 @@ export async function apply(ctx, config) {
     try {
       const full = mode === 'full'
       const date = digestDate(config.timezone)
-      const hours = Number(ageHours) > 0 ? Number(ageHours) : config.ageHours
-      let reincludeUrls = []
-      if (!full) {
-        const existing = path.join(outputDir, date + '.md')
-        if (existsSync(existing)) {
-          reincludeUrls = [...readFileSync(existing, 'utf8').matchAll(/https?:\/\/[^)\]\s>"'，。、；]+/g)].map((m) => m[0])
-        }
-      }
+      // daily = today only (midnight -> now); full = the caller's window.
+      const hours = full
+        ? (Number(ageHours) > 0 ? Number(ageHours) : config.ageHours)
+        : hoursSinceMidnight()
       const collected = await runCollect({
         out: cacheFile,
         ageHours: hours,
-        state: full ? '' : stateFile,
+        state: '',
         maxItems: full ? FULL_MAX_ITEMS : config.maxItems,
-        reincludeUrls,
       })
       mergeWeb(collected, await webAugment({ signal }))
       const items = collected.items || []
       if (!items.length) throw new Error('未采集到任何候选条目（各源状态见 .cache/candidates.json）')
       const data = await curateItems(items.slice(0, MAX_CANDIDATES_TO_CURATE), { stream, signal, maxTokens: config.curationMaxTokens })
-      const scope = full ? '全量视图 · 近 ' + hours + ' 小时' : ''
+      const scope = full ? '全量视图 · 近 ' + Math.round(hours) + ' 小时' : ''
       const markdown = renderDigest({ date, config, data, collected, scope })
-      const result = {
+      // daily: the canonical day file; full: a uniquely-named archive file.
+      const stem = full ? fullViewName(date, hours, new Date(), config.timezone) : date
+      const file = writeDigest({ outputDir, date: stem, markdown })
+      if (!full) recordSeen({ updateSeen: file, state: stateFile }) // history log only; never filters
+      return {
         date,
+        file: stem,
+        path: file,
         scope,
         markdown,
         mode: full ? 'full' : 'daily',
@@ -213,11 +228,6 @@ export async function apply(ctx, config) {
         itemCount: items.length,
         sources: collected.sources || [],
       }
-      if (full) return result
-      const file = writeDigest({ outputDir, date, markdown })
-      recordSeen({ updateSeen: file, state: stateFile })
-      result.path = file
-      return result
     } finally {
       generating = false
     }
@@ -231,14 +241,14 @@ export async function apply(ctx, config) {
 
   const newsCollect = defineTool({
     name: 'news_collect',
-    description: '采集近 N 小时的大模型推理候选资讯（arXiv / HF Daily Papers / 开源引擎 GitHub releases，含 vLLM-Ascend 与华为昇腾系 MindIE/MindSpeed/torch_npu / 技术博客 / Hacker News / web 搜索补充），返回按推理关键词打分的候选列表与各源状态。只读，零 LLM 成本；想深挖时用返回的候选自行筛选。',
+    description: '按时间窗全量采集大模型推理候选资讯（arXiv / HF Daily Papers / 开源引擎 GitHub releases，含 vLLM-Ascend 与华为昇腾系 MindIE/MindSpeed/torch_npu / 技术博客 / Hacker News / web 搜索补充；不做历史去重），返回按推理关键词打分的候选列表与各源状态。只读，零 LLM 成本；想深挖时用返回的候选自行筛选。',
     parameters: {
       ageHours: { type: 'integer', description: '时间窗（小时），6–336；缺省用插件配置（默认 72）' },
     },
     output: textOut,
     async execute(args, exec) {
       const hours = Number(args && args.ageHours) > 0 ? Number(args.ageHours) : config.ageHours
-      const c = await runCollect({ out: cacheFile, ageHours: hours, state: stateFile, maxItems: config.maxItems })
+      const c = await runCollect({ out: cacheFile, ageHours: hours, state: '', maxItems: config.maxItems })
       mergeWeb(c, await webAugment({ signal: exec.signal }))
       const src = (c.sources || []).map((s) => (s.status === 'ok' ? '✅ ' : '❌ ') + s.name + (s.status === 'ok' ? ' (' + s.fetched + ' 条)' : ' ' + (s.error || ''))).join('\n')
       const top = JSON.stringify((c.items || []).slice(0, 40), null, 1)
@@ -249,10 +259,10 @@ export async function apply(ctx, config) {
 
   const newsDigest = defineTool({
     name: 'news_digest',
-    description: '生成大模型推理日报。mode=daily（默认）：采集（去重 + 同日并集）→ LLM 筛选 → 写入 digests/YYYY-MM-DD.md → 更新去重状态，同一天重复调用会合并覆盖当天日报。mode=full：按 ageHours 时间窗全量采集（完全不做历史去重）→ LLM 筛选 → 直接返回 Markdown，不落盘、不更新去重状态（适合“看看最近 N 小时/天推理圈全部动静”这类请求）。耗时数分钟。',
+    description: '生成大模型推理日报（均不做历史去重）。mode=daily（默认）：采集【当天 00:00 至现在】的全量条目 → LLM 筛选 → 覆盖写入 digests/YYYY-MM-DD.md（当天重复调用只增不减）并记录 seen 历史。mode=full：按 ageHours 时间窗（6–336，建议 24/48/72/168）全量采集 → LLM 筛选 → 存档到唯一文件名 digests/<日期>_full-<窗>h-<时刻>.md（互不覆盖、不更新 seen）并返回 Markdown（适合“看看最近 N 小时/天推理圈全部动静”）。耗时数分钟。',
     parameters: {
       mode: { type: 'string', enum: ['daily', 'full'], description: "'daily'（默认）或 'full'（全量视图：不去重、不落盘、返回 markdown）" },
-      ageHours: { type: 'integer', description: '时间窗（小时），6–336；full 模式建议 24/48/72/168；daily 模式缺省用插件配置' },
+      ageHours: { type: 'integer', description: '仅 full 模式有效的时间窗（小时），6–336，建议 24/48/72/168；daily 模式忽略此参数（固定用插件配置的时间窗）' },
     },
     output: textOut,
     async execute(args, exec) {
@@ -260,7 +270,7 @@ export async function apply(ctx, config) {
       if (r.mode === 'full') {
         return {
           ok: true,
-          text: '全量视图（' + r.scope + '，候选 ' + r.itemCount + ' 条；未落盘、未更新去重状态）：\n\n' + r.markdown,
+          text: '全量视图已生成（' + r.scope + '，候选 ' + r.itemCount + ' 条；存档 ' + r.path + '，未更新 seen 历史）：\n\n' + r.markdown,
         }
       }
       return {
@@ -310,18 +320,33 @@ export async function apply(ctx, config) {
       req.on('end', () => resolveP(Buffer.concat(chunks).toString('utf8')))
       req.on('error', () => resolveP('{}'))
     })
-    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+    // File stems: daily reports 'YYYY-MM-DD', full-view archives
+    // 'YYYY-MM-DD_full-<H>h-<HHMMSS>'.
+    const STEM_RE = /^(\d{4}-\d{2}-\d{2})(?:_full-(\d+)h-(\d{6}))?$/
     const listDigests = () => {
       if (!existsSync(outputDir)) return []
       return readdirSync(outputDir)
-        .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-        .sort()
-        .reverse()
         .map((f) => {
-          const st = statSync(path.join(outputDir, f))
-          const md = readFileSync(path.join(outputDir, f), 'utf8')
-          return { date: f.slice(0, 10), size: st.size, mtime: st.mtimeMs, headlines: extractHeadlines(md) }
+          const m = f.match(/^(.+)\.md$/)
+          if (!m || !STEM_RE.test(m[1])) return null
+          return { stem: m[1], file: f }
         })
+        .filter(Boolean)
+        .map(({ stem, file }) => {
+          const st = statSync(path.join(outputDir, file))
+          const md = readFileSync(path.join(outputDir, file), 'utf8')
+          const m = stem.match(STEM_RE)
+          return {
+            name: stem,
+            date: m[1],
+            kind: m[2] ? 'full' : 'daily',
+            ...(m[2] ? { windowHours: Number(m[2]), at: m[3] } : {}),
+            size: st.size,
+            mtime: st.mtimeMs,
+            headlines: extractHeadlines(md),
+          }
+        })
+        .sort((a, b) => b.mtime - a.mtime)
     }
     const route = {
       kind: 'prefix',
@@ -333,11 +358,12 @@ export async function apply(ctx, config) {
           if (req.method === 'GET' && seg[0] === 'digests' && seg.length === 1) {
             return sendJson(res, 200, { ok: true, digests: listDigests() })
           }
-          if (req.method === 'GET' && seg[0] === 'digests' && seg.length === 2 && DATE_RE.test(seg[1])) {
+          if (req.method === 'GET' && seg[0] === 'digests' && seg.length === 2 && STEM_RE.test(seg[1])) {
             const file = path.join(outputDir, seg[1] + '.md')
-            if (!existsSync(file)) return sendJson(res, 404, { ok: false, error: '该日期暂无日报' })
+            if (!existsSync(file)) return sendJson(res, 404, { ok: false, error: '该日报不存在' })
             const md = readFileSync(file, 'utf8')
-            return sendJson(res, 200, { ok: true, date: seg[1], markdown: md, headlines: extractHeadlines(md) })
+            const m = seg[1].match(STEM_RE)
+            return sendJson(res, 200, { ok: true, name: seg[1], date: m[1], kind: m[2] ? 'full' : 'daily', markdown: md, headlines: extractHeadlines(md) })
           }
           if (req.method === 'POST' && seg[0] === 'generate' && seg.length === 1) {
             const body = JSON.parse((await readBody(req)) || '{}')
@@ -345,10 +371,7 @@ export async function apply(ctx, config) {
             const timer = setTimeout(() => ac.abort(), config.generateTimeoutMs)
             try {
               const r = await runDigest({ signal: ac.signal, mode: body.mode === 'full' ? 'full' : 'daily', ageHours: body.ageHours })
-              const out = { ok: true, date: r.date, scope: r.scope, mode: r.mode, headlines: r.headlines, itemCount: r.itemCount, sources: r.sources }
-              if (r.mode === 'full') out.markdown = r.markdown
-              else out.path = r.path
-              return sendJson(res, 200, out)
+              return sendJson(res, 200, { ok: true, date: r.date, name: r.file, scope: r.scope, mode: r.mode, path: r.path, markdown: r.markdown, headlines: r.headlines, itemCount: r.itemCount, sources: r.sources })
             } finally {
               clearTimeout(timer)
             }

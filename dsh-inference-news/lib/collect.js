@@ -508,13 +508,8 @@ async function collect(args) {
   const sinceHours = args.ageHours;
   const state = loadState(args.state);
   const now = Date.now();
-  // Same-day union: URLs already present in today's digest bypass the seen
-  // filter so a later same-day regeneration can re-select them (the digest
-  // grows through the day instead of thinning as the pool depletes).
-  const reinclude = new Set((args.reincludeUrls || []).map(normUrl));
   const recent = (url) => {
     const key = normUrl(url);
-    if (reinclude.has(key)) return false;
     const seenAt = state.get(key);
     if (!seenAt) return false;
     return now - Date.parse(seenAt) <= 14 * 86400e3;

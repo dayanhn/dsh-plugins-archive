@@ -233,7 +233,7 @@ export function renderDigest({ date, config, data, collected, scope }) {
   }
   if (scope) {
     L.push('')
-    L.push('备注：' + scope + '——不做历史去重，仅呈现时间窗内入选条目；本视图不落盘、不更新去重状态。')
+    L.push('备注：' + scope + '——不做历史去重，仅呈现时间窗内入选条目；已存档为独立文件（唯一文件名，不覆盖日报），不更新 seen 历史。')
   }
   L.push('')
   L.push('</details>')
@@ -247,4 +247,15 @@ export function writeDigest({ outputDir, date, markdown }) {
   const file = path.join(outputDir, date + '.md')
   writeFileSync(file, markdown)
   return file
+}
+
+/**
+ * File stem for one full-window view: <date>_full-<H>h-<HHMMSS> (local-zone
+ * clock). Unique per run — the pipeline's per-process lock makes same-second
+ * collisions impossible — so full views are archived side by side instead of
+ * clobbering each other or the day's canonical report.
+ */
+export function fullViewName(dateStr, hours, now = new Date(), timezone = 'Asia/Shanghai') {
+  const p = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(now)
+  return dateStr + '_full-' + Math.round(Number(hours)) + 'h-' + p.replace(/:/g, '')
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { parseCuration, buildCurationPayload, renderDigest, writeDigest, digestDate, headerDate, curateItems } from '../lib/digest.js'
+import { parseCuration, buildCurationPayload, renderDigest, writeDigest, digestDate, headerDate, curateItems, fullViewName } from '../lib/digest.js'
 
 const SAMPLE = {
   headlines: [{ title: 'T1', why: 'w', links: ['https://a.b/c'] }],
@@ -134,9 +134,16 @@ test('curateItems: max-tokens finish yields actionable errors (empty vs partial)
 test('renderDigest: scope labels the title and adds a display-only footer note', () => {
   const md = renderDigest({ date: '2026-08-25', config: { timezone: 'Asia/Shanghai' }, data: SAMPLE, collected: COLLECTED, scope: '全量视图 · 近 72 小时' })
   assert.ok(md.startsWith('# 📰 大模型推理日报 · 2026年8月25日星期二 · 全量视图 · 近 72 小时'))
-  assert.ok(md.includes('不做历史去重，仅呈现时间窗内入选条目；本视图不落盘、不更新去重状态'))
+  assert.ok(md.includes('不做历史去重，仅呈现时间窗内入选条目；已存档为独立文件（唯一文件名，不覆盖日报），不更新 seen 历史'))
   const plain = renderDigest({ date: '2026-08-25', config: { timezone: 'Asia/Shanghai' }, data: SAMPLE, collected: COLLECTED })
   assert.ok(!plain.includes('全量视图'))
+})
+
+test('fullViewName: unique stem with the local-zone clock', () => {
+  const now = new Date('2026-08-25T09:05:34.000Z') // 17:05:34 in Asia/Shanghai
+  assert.equal(fullViewName('2026-08-25', 72, now, 'Asia/Shanghai'), '2026-08-25_full-72h-170534')
+  assert.equal(fullViewName('2026-08-25', 24.4, now, 'Asia/Shanghai'), '2026-08-25_full-24h-170534')
+  assert.notEqual(fullViewName('2026-08-25', 72, new Date('2026-08-25T09:05:35.000Z'), 'Asia/Shanghai'), '2026-08-25_full-72h-170534')
 })
 
 test('digestDate / headerDate respect the zone', () => {
