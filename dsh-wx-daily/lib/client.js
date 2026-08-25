@@ -39,6 +39,37 @@ window.__ModuleLoader__.load({
       warn: v('--dsw-static-yellow-500', '#e6c07b'),
       radius: 8,
     }
+    const LINK = v('--dsw-alias-link-primary', '#6ca0f8')
+
+    // 内联样式表达不了 :hover；<style> 随 tab 的 React 树一起渲染（sidebar 若在
+    // shadow DOM 里，样式也正好被限定在 tab 内），wxd- 前缀防冲突。
+    const CSS_TEXT = [
+      '.wxd-row { transition: background-color .12s ease; }',
+      '.wxd-row:hover { background-color: ' + T.bg2 + '; }',
+      '.wxd-row:hover .wxd-title { color: ' + LINK + '; }',
+      '.wxd-title { transition: color .12s ease; }',
+      '.wxd-chip { transition: border-color .12s ease, background-color .12s ease; }',
+      '.wxd-chip:hover { border-color: ' + T.borderStrong + ' !important; }',
+      '.wxd-scroll { scrollbar-width: thin; scrollbar-color: ' + T.border + ' transparent; }',
+      '.wxd-scroll::-webkit-scrollbar { width: 8px; }',
+      '.wxd-scroll::-webkit-scrollbar-thumb { background: ' + T.border + '; border-radius: 4px; }',
+      '.wxd-scroll::-webkit-scrollbar-track { background: transparent; }',
+    ].join('\n')
+
+    // 相对时间（今天/昨天/MM-DD），按采集时区渲染；zh-CN 24 小时制在午夜
+    // 会输出 "24:00"，归一成 "00:00"。
+    function fmtTime(isoStr, tz) {
+      if (!isoStr) return '—'
+      const d = new Date(isoStr)
+      if (!Number.isFinite(d.getTime())) return '—'
+      const dayF = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+      const hmF = new Intl.DateTimeFormat('zh-CN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false })
+      const day = dayF.format(d)
+      const hm = hmF.format(d).replace(/^24:/, '00:')
+      if (day === dayF.format(new Date())) return '今天 ' + hm
+      if (day === dayF.format(new Date(Date.now() - 86400000))) return '昨天 ' + hm
+      return day.slice(5) + ' ' + hm
+    }
 
     // ── minimal safe markdown renderer (summary subset) ────────────────────
     // All fetched text is escaped: elements are built with createElement,
@@ -197,11 +228,55 @@ window.__ModuleLoader__.load({
       }
 
       const accounts = (data && data.accounts) || []
-      // it.configName is the accounts.json name the item was collected under
-      // (it.account is the wewe-rss feed name, which may differ slightly).
-      const items = ((data && data.items) || []).filter((it) => !filter || it.configName === filter)
+      const tz = (data && data.timezone) || 'Asia/Shanghai'
 
-      return React.createElement('div', { style: { padding: 10, overflow: 'auto', height: '100%' } },
+      // 分组列表：每个号一组（accounts.json 顺序），组内 = 时间列 + 标题链接。
+      // 文章按 configName 归组（it.account 是微信读书侧规范名，可能略有出入，
+      // 只用于组内兜底显示，不参与分组）。
+      const renderGroups = () => {
+        const shown = accounts.filter((a) => !filter || a.name === filter)
+        const els = []
+        let visibleItems = 0
+        let hasCollectable = false
+        for (const a of shown) {
+          if (a.status === 'ok' || a.status === 'empty') hasCollectable = true
+          const rows = ((data.items) || []).filter((it) => it.configName === a.name)
+          visibleItems += rows.length
+          const sub = a.status === 'ok' ? a.count + ' 篇' : a.status === 'empty' ? '无更新' : a.status === 'nofeed' ? '未订阅' : '抓取失败'
+          els.push(React.createElement('div', { key: 'gh-' + a.name, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 8px 4px' } },
+            React.createElement('span', { style: { fontSize: 12, fontWeight: 600 } }, a.name),
+            React.createElement('span', { style: { fontSize: 10.5, opacity: 0.5, whiteSpace: 'nowrap' } }, sub),
+            React.createElement('div', { style: { flex: 1, height: 1, background: T.border } })))
+          if (a.status === 'error' || a.status === 'nofeed') {
+            if (a.error) els.push(React.createElement('div', {
+              key: 'ge-' + a.name,
+              style: { padding: '0 8px 6px', fontSize: 11, lineHeight: 1.5, color: a.status === 'error' ? T.danger : 'inherit', opacity: a.status === 'error' ? 0.9 : 0.5 },
+            }, a.error))
+            continue
+          }
+          for (const it of rows) {
+            els.push(React.createElement('div', {
+              key: (it.url || it.title) + '-' + els.length,
+              className: 'wxd-row',
+              style: { display: 'flex', gap: 8, padding: '5px 8px', borderRadius: 6, marginBottom: 1 },
+            },
+              React.createElement('span', { style: { width: 84, flex: 'none', fontSize: 10.5, opacity: 0.5, paddingTop: 2, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' } }, fmtTime(it.publishedAt, tz)),
+              React.createElement('a', {
+                className: 'wxd-title',
+                href: it.url, target: '_blank', rel: 'noreferrer',
+                style: { flex: 1, fontSize: 12.5, lineHeight: 1.5, color: 'inherit', textDecoration: 'none' },
+              }, it.title)))
+          }
+        }
+        if (visibleItems === 0 && hasCollectable) {
+          els.push(React.createElement('div', { key: 'hint', style: { fontSize: 12, opacity: 0.6, padding: '8px 8px 0' } },
+            filter ? '该号在此时间窗内没有文章。' : '该时间窗内没有采集到文章（各号状态见分组标题）。'))
+        }
+        return els
+      }
+
+      return React.createElement('div', { className: 'wxd-scroll', style: { padding: 10, overflow: 'auto', height: '100%' } },
+        React.createElement('style', { key: 'wxd-styles' }, CSS_TEXT),
         // header
         React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center', flexWrap: 'wrap' } },
           React.createElement('span', { style: { fontSize: 13, fontWeight: 700 } }, '📮 公众号'),
@@ -219,12 +294,12 @@ window.__ModuleLoader__.load({
           React.createElement('label', { style: { display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer', opacity: 0.85 } },
             React.createElement('input', { type: 'checkbox', checked: withSummary, onChange: (e) => setWithSummary(e.target.checked), disabled: busy !== '' }),
             '含 LLM 摘要'),
-          data ? React.createElement('span', { style: { opacity: 0.55 } }, data.window.label + ' · ' + new Date(data.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) : null),
+          data ? React.createElement('span', { style: { opacity: 0.55 } }, data.window.label + ' · ' + new Date(data.collectedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ' · ' + (data.stats ? data.stats.items : 0) + ' 篇') : null),
         // error
         error ? React.createElement('div', { style: { color: T.danger, fontSize: 12, marginBottom: 8 } }, '⚠ ' + error) : null,
         // summary block
         data && data.summary ? React.createElement('div', {
-          style: { background: T.bg, border: '1px solid ' + T.border, borderRadius: T.radius, padding: '8px 10px', marginBottom: 10 },
+          style: { background: T.bg, border: '1px solid ' + T.border, borderLeft: '3px solid ' + LINK, borderRadius: T.radius, padding: '8px 10px', marginBottom: 10 },
         }, renderMarkdown(data.summary)) : null,
         data && data.summaryError ? React.createElement('div', { style: { fontSize: 11.5, opacity: 0.6, marginBottom: 8 } }, '（摘要：' + data.summaryError + '）') : null,
         // account chips (filter)
@@ -236,24 +311,14 @@ window.__ModuleLoader__.load({
             return React.createElement('button', {
               key: a.name, type: 'button', title: a.name + (a.error ? '：' + a.error : ''),
               onClick: () => setFilter(on ? '' : a.name), disabled: busy !== '',
+              className: 'wxd-chip',
               style: { background: on ? T.bg2 : 'transparent', color: 'inherit', border: '1px solid ' + (on ? T.borderStrong : T.border), borderRadius: 10, padding: '1px 8px', fontSize: 11, cursor: 'pointer' },
             }, a.name + ' ', React.createElement('span', { style: { color: m.color, opacity: m.opacity || 1 } }, m.text))
           })) : null,
         // list
         !data && !error ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6, lineHeight: 1.6 } }, '还没有采集记录。选个时间窗点「⚡ 采集」，或在对话里输入 /wx。') : null,
         (busy === 'collect') ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6 } }, '正在通过本机微信读书会话逐号抓取（3 秒/号间隔' + (withSummary ? '，之后生成摘要' : '') + '，约 1~2 分钟）…') : null,
-        data && items.length === 0 ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6, marginTop: 8 } }, filter ? '该号在此时间窗内没有文章。' : '该时间窗内没有采集到文章（各号状态见上方 chips）。') : null,
-        items.map((it, idx) =>
-          React.createElement('div', {
-            key: (it.url || '') + '-' + idx,
-            style: { padding: '6px 8px', marginBottom: 4, borderRadius: T.radius, background: idx % 2 ? 'transparent' : T.bg, border: '1px solid ' + (idx === 0 ? T.border : 'transparent') },
-          },
-            React.createElement('a', {
-              href: it.url, target: '_blank', rel: 'noreferrer',
-              style: { fontSize: 12.5, color: 'inherit', textDecoration: 'none', lineHeight: 1.45, display: 'block' },
-            }, it.title),
-            React.createElement('div', { style: { fontSize: 11, opacity: 0.55, marginTop: 2 } },
-              (it.publishedAt ? it.publishedAt.slice(5, 16).replace('T', ' ') : '—') + ' · ' + it.account)))
+        data ? renderGroups() : null
       )
     }
 
