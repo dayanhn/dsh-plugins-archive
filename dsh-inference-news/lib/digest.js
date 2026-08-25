@@ -27,6 +27,7 @@ const PROMPT_LINES = [
   '{',
   '  "headlines": [{"title": "…", "why": "1–2 句为什么重要（可含关键数字与背景）", "links": ["url", "…"]}],',
   '  "releases": [{"repo": "项目名", "version": "版本号", "date": "MM-DD", "link": "url", "bullets": ["中文变更点（3–8 条，含性能数字/影响面）", "…"]}],',
+  '  "blogs": [{"title": "博客标题（保留原文）", "link": "url", "source": "博客名", "date": "MM-DD 或 —", "bullets": ["中文要点（2–5 条，可含背景与数字）", "…"]}],',
   '  "papers": [{"title": "论文标题（保留原文）", "link": "url", "category": "cs.xx 或 —", "note": "中文点评（60–100 字：方法要点 / 关键结果 / 对推理部署的意义，基于摘要）"}],',
   '  "community": [{"title": "标题", "link": "url", "stats": "▲ 分数 / N 评论", "note": "中文说明（60–100 字：为什么值得关注，可含背景）"}],',
   '  "note": "可选：数据来源状态或特殊情况说明"',
@@ -36,10 +37,11 @@ const PROMPT_LINES = [
   '1. headlines 必须恰好 3 条，从全量候选里挑最重要的（重大 release / 高影响力论文 / 热议事件）。',
   '2. releases：只保留窗口内有实质变更的 release，按项目分组（每个项目一条，bullets 3–8 条列具体变更与数字）；没有就空数组。',
   '3. papers：5–12 篇，优先分数高且重要的，宁缺毋滥；没有就空数组。',
-  '4. community：3–5 条；没有就空数组。',
-  '5. 所有 title 与 link 必须取自候选条目，URL 逐字复制候选中的链接，严禁编造 URL 或内容。',
-  '6. 点评与变更点必须基于摘要内容；摘要为空或明显与推理无关的条目应排除。',
-  '7. 正文用中文（论文标题保留英文原文）。',
+  '4. blogs：重要技术博客（厂商官方博客 / 行业深度分析 / 媒体报道），至多 5 条，每条 bullets 2–5 条；没有就空数组。',
+  '5. community：3–5 条；没有就空数组。',
+  '6. 所有 title 与 link 必须取自候选条目，URL 逐字复制候选中的链接，严禁编造 URL 或内容。',
+  '7. 点评与变更点必须基于摘要内容；摘要为空或明显与推理无关的条目应排除。',
+  '8. 正文用中文（论文标题、博客标题保留原文）。',
 ]
 export const CURATION_SYSTEM = PROMPT_LINES.join('\n')
 
@@ -74,7 +76,7 @@ export function parseCuration(text) {
   const b = t.lastIndexOf('}')
   if (a < 0 || b <= a) throw new Error('LLM 输出中未找到 JSON 对象')
   const data = JSON.parse(t.slice(a, b + 1))
-  for (const k of ['headlines', 'releases', 'papers', 'community']) {
+  for (const k of ['headlines', 'releases', 'blogs', 'papers', 'community']) {
     if (!Array.isArray(data[k])) throw new Error('LLM 输出缺少数组字段: ' + k)
   }
   data.note = typeof data.note === 'string' ? data.note : ''
@@ -170,13 +172,26 @@ export function renderDigest({ date, config, data, collected, scope }) {
   L.push('## 🚀 引擎与开源动态')
   L.push('')
   if (!(data.releases || []).length) {
-    L.push('今日无重大 release。')
+    L.push('窗口内无重大 release。')
     L.push('')
   } else {
     for (const r of data.releases) {
       L.push('### ' + r.repo)
       L.push('- **' + (r.version || '—') + '**' + (r.date ? ' · ' + r.date : '') + ' · [Release](' + r.link + ')')
       for (const b of r.bullets || []) L.push('  - ' + b)
+      L.push('')
+    }
+  }
+
+  L.push('## 📝 技术博客')
+  L.push('')
+  if (!(data.blogs || []).length) {
+    L.push('窗口内无入选博客条目。')
+    L.push('')
+  } else {
+    for (const b of data.blogs) {
+      L.push('- [' + b.title + '](' + b.link + ') · ' + (b.source || '博客') + (b.date && b.date !== '—' ? ' · ' + b.date : ''))
+      for (const bl of b.bullets || []) L.push('  - ' + bl)
       L.push('')
     }
   }

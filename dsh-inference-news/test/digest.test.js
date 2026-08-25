@@ -8,6 +8,7 @@ import { parseCuration, buildCurationPayload, renderDigest, writeDigest, digestD
 const SAMPLE = {
   headlines: [{ title: 'T1', why: 'w', links: ['https://a.b/c'] }],
   releases: [{ repo: 'vLLM', version: 'v0.28.0', date: '08-24', link: 'https://g.h/r', bullets: ['b1', 'b2'] }],
+  blogs: [{ title: 'Blog | Post', link: 'https://b.c/d', source: 'NVIDIA Dev Blog', date: '08-24', bullets: ['要点 1', '要点 2'] }],
   papers: [
     { title: 'Pipe | Title', link: 'https://arxiv.org/abs/1', category: 'cs.LG', note: 'n' },
     { title: 'NoCat', link: 'https://arxiv.org/abs/2', category: '', note: 'n2' },
@@ -60,6 +61,11 @@ test('renderDigest: full structure, pipe escaping, empty sections, source footer
   assert.ok(md.includes('> 1. **T1** — w'))
   assert.ok(md.includes('### vLLM'))
   assert.ok(md.includes('- **v0.28.0** · 08-24 · [Release](https://g.h/r)'))
+  assert.ok(md.includes('## 📝 技术博客'))
+  assert.ok(md.includes('- [Blog | Post](https://b.c/d) · NVIDIA Dev Blog · 08-24'), 'blog row: ' + (md.match(/- \[Blog.*Post.*/)||[''])[0])
+  assert.ok(md.includes('  - 要点 1'))
+  const noBlogs = renderDigest({ date: '2026-08-25', config: { timezone: 'Asia/Shanghai' }, data: { ...SAMPLE, blogs: [] }, collected: COLLECTED })
+  assert.ok(noBlogs.includes('窗口内无入选博客条目。'))
   assert.ok(md.includes('  - b1'))
   assert.ok(md.includes('Pipe \\| Title'), 'pipe should be escaped in table cell')
   assert.ok(md.includes('今日无入选社区热点'))

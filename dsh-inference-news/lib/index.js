@@ -109,23 +109,32 @@ export async function apply(ctx, config) {
   let generating = false
 
   /**
-   * Optional web-search augmentation (parity with the M0 skill's 热点补充
-   * step): the 39 deterministic sources miss Chinese media, community PRs
-   * and vendor posts that only search surfaces. Two queries, capped at 10
-   * scored items; a search failure degrades to a footer entry, never aborts.
+   * Optional web-search augmentation — collection parity with the skill's
+   * 热点补充 step (the query set is shared: SKILL.md step 2 and this list
+   * stay in sync): the two baseline queries plus one targeted follow-up
+   * derived from the pool's top release (the skill's agent does the same
+   * manually). The 39 deterministic sources miss Chinese media, community
+   * PRs and vendor posts that only search surfaces. Capped at 15 scored
+   * items; a search failure degrades to a footer entry, never aborts.
    */
-  async function webAugment({ signal } = {}) {
+  async function webAugment({ signal, pool } = {}) {
     const web = ctx.get('web')
     const t0 = Date.now()
     if (!web || typeof web.search !== 'function') {
       return { items: [], source: { name: 'WebSearch', status: 'skipped', error: 'web 服务不可用', ms: Date.now() - t0 } }
     }
     try {
-      const queries = ['大模型推理 最新 进展 发布', 'LLM inference engine release']
+      const queries = ['大模型推理 最新进展', 'LLM inference engine release']
+      const topRelease = (pool || []).find((it) => it.kind === 'release' && (it.score || 0) >= 3)
+      if (topRelease) {
+        const project = String(topRelease.source || '').replace(/^GitHub:/, '').split('/')[1] || topRelease.source
+        const tag = topRelease.tag ? ' ' + topRelease.tag : ''
+        queries.push(project + tag + ' release 报道 评测')
+      }
       const raw = []
       const keys = new Set()
       for (const q of queries) {
-        const r = await web.search({ query: q, maxResults: 8 }, signal)
+        const r = await web.search({ query: q, maxResults: 10 }, signal)
         for (const s of r.sources || []) {
           const key = normUrl(s.url)
           if (!key || keys.has(key)) continue
@@ -144,7 +153,7 @@ export async function apply(ctx, config) {
         .map((it) => { const { score, matched } = scoreItem([it.title, it.snippet].join(' ')); return { ...it, score, matched } })
         .filter((it) => it.score >= 1)
         .sort((a, b) => b.score - a.score)
-        .slice(0, 10)
+        .slice(0, 15)
       return { items, source: { name: 'WebSearch', status: 'ok', fetched: items.length, ms: Date.now() - t0 } }
     } catch (err) {
       return { items: [], source: { name: 'WebSearch', status: 'error', error: String((err && err.message) || err), ms: Date.now() - t0 } }
@@ -207,7 +216,7 @@ export async function apply(ctx, config) {
         state: '',
         maxItems: full ? FULL_MAX_ITEMS : config.maxItems,
       })
-      mergeWeb(collected, await webAugment({ signal }))
+      mergeWeb(collected, await webAugment({ signal, pool: collected.items }))
       const items = collected.items || []
       if (!items.length) throw new Error('未采集到任何候选条目（各源状态见 .cache/candidates.json）')
       const data = await curateItems(items.slice(0, MAX_CANDIDATES_TO_CURATE), { stream, signal, maxTokens: config.curationMaxTokens })
@@ -249,7 +258,7 @@ export async function apply(ctx, config) {
     async execute(args, exec) {
       const hours = Number(args && args.ageHours) > 0 ? Number(args.ageHours) : config.ageHours
       const c = await runCollect({ out: cacheFile, ageHours: hours, state: '', maxItems: config.maxItems })
-      mergeWeb(c, await webAugment({ signal: exec.signal }))
+      mergeWeb(c, await webAugment({ signal: exec.signal, pool: c.items }))
       const src = (c.sources || []).map((s) => (s.status === 'ok' ? '✅ ' : '❌ ') + s.name + (s.status === 'ok' ? ' (' + s.fetched + ' 条)' : ' ' + (s.error || ''))).join('\n')
       const top = JSON.stringify((c.items || []).slice(0, 40), null, 1)
       return { ok: true, text: '共 ' + c.itemCount + ' 条候选（近 ' + hours + ' 小时）\n\n各源状态：\n' + src + '\n\n候选列表（前 40，JSON）：\n' + top }
