@@ -68,7 +68,7 @@ export function parseFetcherResult(text) {
   try {
     body = JSON.parse(String(text || ''))
   } catch {
-    throw new Error('fetcher 输出不是合法 JSON（stdout 可能被污染，看 server 日志）')
+    throw new Error('fetcher 输出不是合法 JSON（本轮结果已丢失，重新点「⚡ 采集」即可）')
   }
   if (!body || !Array.isArray(body.sources)) throw new Error('fetcher 输出缺少 sources 数组')
   return body
@@ -135,12 +135,23 @@ async function defaultRun(fetcherDir, pages, signal) {
       signal,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (c) => { stdout += c })
-    child.stderr.on('data', (c) => { stderr += c })
-    child.on('error', (err) => resolveP({ code: -1, stdout, stderr: stderr + '\n' + String((err && err.message) || err) }))
-    child.on('close', (code) => resolveP({ code: code ?? -1, stdout, stderr }))
+    // 必须按 Buffer 累积、最后一次性 utf8 解码：pipe 分块边界可能落在多字节
+    // 中文字符中间，逐块 Buffer→string 会插入 U+FFFD，整份 JSON 因此解析失败
+    // （21 个号 ~300KB 中文结果，逐次拼接几乎必炸）。
+    const out = []
+    const errOut = []
+    child.stdout.on('data', (c) => { out.push(c) })
+    child.stderr.on('data', (c) => { errOut.push(c) })
+    const finish = (code) => resolveP({
+      code,
+      stdout: Buffer.concat(out).toString('utf8'),
+      stderr: Buffer.concat(errOut).toString('utf8'),
+    })
+    child.on('error', (err) => {
+      errOut.push(Buffer.from('\n' + String((err && err.message) || err)))
+      finish(-1)
+    })
+    child.on('close', (code) => finish(code ?? -1))
   })
 }
 

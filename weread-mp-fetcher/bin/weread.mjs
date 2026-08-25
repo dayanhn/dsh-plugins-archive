@@ -468,8 +468,21 @@ try {
 }
 
 if (isMain) {
+  // 全量结果 JSON 走管道是**异步**写入:main() 内 stdout.write 之后立刻
+  // process.exit 会截断未冲刷的尾部(20+ 号数百 KB 输出时几乎必现,父进程
+  // 拿到半截 JSON)。退出前等 stdout drain;5s 兜底,绝不无限挂起。
+  const exitWhenFlushed = (code) => {
+    if (process.stdout.writableLength === 0) {
+      process.exit(code);
+    } else {
+      const t = setTimeout(() => process.exit(code), 5e3);
+      const done = () => { clearTimeout(t); process.exit(code); };
+      process.stdout.once('drain', done);
+      process.stdout.once('error', done);
+    }
+  };
   main().then(
-    () => process.exit(process.exitCode || 0),
+    () => exitWhenFlushed(process.exitCode || 0),
     (e) => {
       console.error('出错了:', e.message);
       process.exit(1);
