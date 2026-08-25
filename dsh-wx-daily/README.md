@@ -83,7 +83,8 @@ profile 目录里长期保持）。同一 profile 同时只能有一个 Chrome �
 - **路由**：`GET /wx-daily/latest`、`GET /wx-daily/accounts`、
   `GET /wx-daily/status`（fetcher/专用 Chrome 连通性 + 已订阅号数诊断）、
   `POST /wx-daily/collect { window|from,to, withSummary }`。
-- **配额**：每天默认 2 次采集（20 号 × 1 页 = 20 请求，预算 40）。
+- **配额**：每天 2 次采集（21 号 × 1 页 = 21 请求，预算 44 = 2 次 + 余量）。
+  真正的闸门是 `maxRequestsPerDay`（请求预算）；`maxRunsPerDay` 只是次数上限。
   超配额时采集报「今日采集配额已用完」——是防风控闸门，不是故障。
 
 ## 增加公众号（两步，可批量）
