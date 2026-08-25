@@ -116,6 +116,20 @@ git push
 - **定时**：`0 9 * * * /home/zzw/work/news/news-daily.sh`（headless profile 跑 `news_digest` 工具）
 - 已知限制（out-of-tree 插件无法注册自定义会话事件 → 无聊天流内嵌卡片；GitHub 直连在本机间歇受干扰等）见 `dsh-inference-news/README.md`
 
+### 📮 dsh-wx-daily — 微信公众号文章面板（原创插件）
+
+- **功能**：采集配置公众号（默认清单 = 2026-06《AI 公众号博主排行榜 TOP20》）在当天 / 指定时间窗内的文章，**每次全量重采、不做历史去重**；可选一次 LLM「今日要点」摘要；侧边栏「📮 公众号」tab + `/wx` 命令 + `wx_collect` 工具
+- **采集通道（无第三方 relay）**：专用 Chrome（独立 profile `~/.weread-mp-fetcher/chrome-profile`，只登录微信读书）+ `weread-mp-fetcher/` 页内直连微信读书官方接口（`bookId=MP_WXS_…`）；采集器内置每日配额闸门（默认 2 次/天、40 请求/天）；插件在采集时自动拉起专用 Chrome（`autoLaunchChrome`）
+- 安装、增删公众号、排障见 `dsh-wx-daily/README.md`
+
+### Vendored 依赖（统一归档）
+
+| 目录 | 上游 | 许可 | 用途 |
+|---|---|---|---|
+| `weread-mp-fetcher/` | [Pengyf04/weread-mp-fetcher](https://github.com/Pengyf04/weread-mp-fetcher)（零 npm 依赖，2026-08 活跃） | MIT | dsh-wx-daily 的采集引擎；本地改动仅 `start-chrome.sh`（专用 Chrome 启动脚本，DISPLAY 兜底 :0 + 剥离代理变量）与 `config.json`（本机配置，accounts 字段由插件每次采集时同步） |
+
+注：早期方案 wewe-rss（[cooderl/wewe-rss](https://github.com/cooderl/wewe-rss)，上游已 archived）因依赖作者闭源 relay 托管微信读书会话，于 2026-08-25 停用并删除。
+
 ## 文档
 
 - `docs/dsh-插件安装与右键改造总结.md` — 全部改动的根因、实现、验证记录、维护方法

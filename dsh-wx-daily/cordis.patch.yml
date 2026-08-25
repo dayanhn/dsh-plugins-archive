@@ -1,0 +1,10 @@
+# dsh-wx-daily bundle patch: inserts this plugin into a profile's layer stack.
+# Applied when a profile lists this bundle; the row references the package by
+# name so Node resolution finds the installed (link:) code.
+# All config uses package defaults (see Config in lib/index.js); override any
+# field by restating the complete config here or in a higher patch layer.
+# accessToken: leave empty to auto-resolve via the wewe-rss /api/gettoken
+# endpoint, or pin the token shown in the wewe-rss admin panel.
+- insert:
+    - id: dsh-wx-daily
+      name: 'dsh-wx-daily'

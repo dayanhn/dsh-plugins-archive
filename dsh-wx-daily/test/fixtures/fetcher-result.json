@@ -1,0 +1,40 @@
+{
+  "onReader": true,
+  "meta": { "pages": 1, "requestsTotal": 4 },
+  "sources": [
+    {
+      "name": "数字生命卡兹克",
+      "bookId": "MP_WXS_0001",
+      "items": [
+        { "t": 1787650200, "title": "Claude Code 深度实测：三周体验全记录", "url": "https://mp.weixin.qq.com/s/fixture-aaa111", "rid": "r1" },
+        { "t": 1787590000, "title": "OpenAI 发布新模型，GPT-5.5 上线", "url": "https://mp.weixin.qq.com/s/fixture-bbb222", "rid": "r2" },
+        { "t": 1787420000, "title": "上周的旧文章（窗口外）", "url": "https://mp.weixin.qq.com/s/fixture-ccc444", "rid": "r3" }
+      ],
+      "pageMeta": [{ "offset": 0, "reviews": 3, "items": 3, "oldest": 1787420000 }],
+      "pagesFetched": 1
+    },
+    {
+      "name": "agent橘",
+      "bookId": "MP_WXS_0002",
+      "items": [
+        { "t": 1787640000, "title": "我用 agent 管了 10 个仓库", "url": "https://mp.weixin.qq.com/s/fixture-ddd444", "rid": "r4" }
+      ],
+      "pageMeta": [{ "offset": 0, "reviews": 1, "items": 1, "oldest": 1787640000 }],
+      "pagesFetched": 1
+    },
+    {
+      "name": "Droca 正在 VibeCoding",
+      "bookId": "MP_WXS_0003",
+      "items": [
+        { "t": 1787000000, "title": "更早的文章", "url": "https://mp.weixin.qq.com/s/fixture-eee555", "rid": "r5" }
+      ],
+      "pageMeta": [{ "offset": 0, "reviews": 1, "items": 1, "oldest": 1787000000 }],
+      "pagesFetched": 1
+    },
+    {
+      "name": "旺小哥",
+      "bookId": "MP_WXS_0004",
+      "err": "errCode=-2041"
+    }
+  ]
+}

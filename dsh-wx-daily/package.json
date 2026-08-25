@@ -1,0 +1,54 @@
+{
+  "name": "dsh-wx-daily",
+  "version": "0.1.0",
+  "description": "WeChat 公众号 article panel for DeepSeek Harness: pulls each configured account's articles from a local wewe-rss instance, filters by a same-day or custom date window (no dedup: every run re-collects), optionally summarizes with one auxiliary LLM call, and shows an aggregated clickable list in a sidebar 公众号 tab. Model tool wx_collect, /wx command, webServer routes /wx-daily/*.",
+  "license": "MIT",
+  "author": "zzw",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "wechat",
+    "wewe-rss",
+    "articles",
+    "plugin"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib",
+    "test",
+    "accounts.default.json",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "_doc": "默认公众号清单（来源：2026-06-16 公众号《2026 年，AI 公众号博主排行榜 TOP20》）。首次运行时插件把它复制到 dataDir/accounts.json；以后增删公众号只改那份文件：name = 显示名，bookId = 微信读书 bookId（MP_WXS_ 开头，给一篇该号文章链接即可算出），enabled = 是否参与采集。",
+  "accounts": [
+    { "name": "数字生命卡兹克", "bookId": "", "enabled": true },
+    { "name": "花叔", "bookId": "", "enabled": true },
+    { "name": "苍何", "bookId": "", "enabled": true },
+    { "name": "findyi", "bookId": "", "enabled": true },
+    { "name": "程序员鱼皮", "bookId": "", "enabled": true },
+    { "name": "agent橘", "bookId": "", "enabled": true },
+    { "name": "群响刘老板", "bookId": "", "enabled": true },
+    { "name": "旺小哥", "bookId": "", "enabled": true },
+    { "name": "阿锋老朋友", "bookId": "", "enabled": true },
+    { "name": "周彦充", "bookId": "MP_WXS_3073978453", "enabled": true },
+    { "name": "爱 Ai 的大刘", "bookId": "", "enabled": true },
+    { "name": "多元思维 Hack", "bookId": "", "enabled": true },
+    { "name": "卢松松", "bookId": "", "enabled": true },
+    { "name": "程序员小灰", "bookId": "", "enabled": true },
+    { "name": "Datawhale", "bookId": "", "enabled": true },
+    { "name": "Droca 正在 VibeCoding", "bookId": "", "enabled": true },
+    { "name": "卡尔的 AI 沃茨", "bookId": "", "enabled": true },
+    { "name": "逛逛 GitHub", "bookId": "", "enabled": true },
+    { "name": "Founder Park", "bookId": "", "enabled": true },
+    { "name": "傅盛", "bookId": "", "enabled": true }
+  ]
+}
