@@ -460,12 +460,21 @@ async function fetchHn(query, sinceHours) {
 const CONCURRENCY = 4;
 const RETRY_DELAY_MS = 1500;
 
-async function withRetry(fn) {
+/**
+ * Retry a flaky source fetch: up to 3 attempts. HTTP 429 (arXiv rate
+ * limiting after a busy morning of runs) gets a 4x backoff and keeps it for
+ * the next attempt; other failures use the base delay.
+ * @param delayMs base delay in ms (tests inject a tiny value).
+ */
+async function withRetry(fn, attempt = 1, delayMs = RETRY_DELAY_MS) {
   try {
     return await fn();
   } catch (err) {
-    await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-    return await fn();
+    if (attempt >= 3) throw err;
+    const throttled = /HTTP 429|rate.?limit/i.test(String((err && err.message) || err));
+    const delay = throttled ? delayMs * 4 : delayMs;
+    await new Promise((r) => setTimeout(r, delay));
+    return await withRetry(fn, attempt + 1, delay);
   }
 }
 
@@ -499,8 +508,13 @@ async function collect(args) {
   const sinceHours = args.ageHours;
   const state = loadState(args.state);
   const now = Date.now();
+  // Same-day union: URLs already present in today's digest bypass the seen
+  // filter so a later same-day regeneration can re-select them (the digest
+  // grows through the day instead of thinning as the pool depletes).
+  const reinclude = new Set((args.reincludeUrls || []).map(normUrl));
   const recent = (url) => {
     const key = normUrl(url);
+    if (reinclude.has(key)) return false;
     const seenAt = state.get(key);
     if (!seenAt) return false;
     return now - Date.parse(seenAt) <= 14 * 86400e3;
@@ -600,6 +614,7 @@ function updateSeen(args) {
 export {
   collect as runCollect,
   updateSeen as recordSeen,
+  withRetry,
   scoreItem,
   normUrl,
   stripTracking,

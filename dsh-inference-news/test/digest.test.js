@@ -131,6 +131,14 @@ test('curateItems: max-tokens finish yields actionable errors (empty vs partial)
   )
 })
 
+test('renderDigest: scope labels the title and adds a display-only footer note', () => {
+  const md = renderDigest({ date: '2026-08-25', config: { timezone: 'Asia/Shanghai' }, data: SAMPLE, collected: COLLECTED, scope: '全量视图 · 近 72 小时' })
+  assert.ok(md.startsWith('# 📰 大模型推理日报 · 2026年8月25日星期二 · 全量视图 · 近 72 小时'))
+  assert.ok(md.includes('不做历史去重，仅呈现时间窗内入选条目；本视图不落盘、不更新去重状态'))
+  const plain = renderDigest({ date: '2026-08-25', config: { timezone: 'Asia/Shanghai' }, data: SAMPLE, collected: COLLECTED })
+  assert.ok(!plain.includes('全量视图'))
+})
+
 test('digestDate / headerDate respect the zone', () => {
   assert.equal(digestDate('Asia/Shanghai', new Date('2026-08-25T01:00:00Z')), '2026-08-25')
   assert.equal(digestDate('UTC', new Date('2026-08-25T01:00:00Z')), '2026-08-25')

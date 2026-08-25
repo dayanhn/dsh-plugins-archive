@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { scoreItem, normUrl, stripTracking, GITHUB_REPOS, RSS_FEEDS, KEYWORDS } from '../lib/collect.js'
+import { scoreItem, normUrl, stripTracking, GITHUB_REPOS, RSS_FEEDS, KEYWORDS, withRetry } from '../lib/collect.js'
 
 test('scoreItem: inference terms accumulate weights', () => {
   const { score, matched } = scoreItem('KV cache compression for LLM inference serving with speculative decoding')
@@ -11,6 +11,26 @@ test('scoreItem: inference terms accumulate weights', () => {
 test('scoreItem: unrelated text scores below the paper gate', () => {
   const { score } = scoreItem('A new framework for frontend styling and design tokens')
   assert.ok(score < 2, 'score was ' + score)
+})
+
+test('withRetry: 429 gets a longer backoff and up to 3 attempts', async () => {
+  let calls = 0
+  const flaky = async () => {
+    calls += 1
+    if (calls <= 2) throw new Error('HTTP 429')
+    return 'ok'
+  }
+  const t0 = Date.now()
+  assert.equal(await withRetry(flaky, 1, 20), 'ok')
+  assert.equal(calls, 3)
+  assert.ok(Date.now() - t0 >= 120, 'two 4x backoffs of 20ms each')
+})
+
+test('withRetry: exhausted attempts rethrow the last error', async () => {
+  let calls = 0
+  const dead = async () => { calls += 1; throw new Error('HTTP 429') }
+  await assert.rejects(withRetry(dead, 1, 5), /HTTP 429/)
+  assert.equal(calls, 3)
 })
 
 test('normUrl: arXiv http->https and version suffix stripped', () => {

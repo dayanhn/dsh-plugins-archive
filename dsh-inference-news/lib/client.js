@@ -166,6 +166,7 @@ window.__ModuleLoader__.load({
       const [view, setView] = React.useState(null)
       const [busy, setBusy] = React.useState('')
       const [error, setError] = React.useState('')
+      const [windowHours, setWindowHours] = React.useState(72)
 
       const loadList = React.useCallback(async () => {
         setBusy('list'); setError('')
@@ -197,6 +198,18 @@ window.__ModuleLoader__.load({
         setBusy('')
       }
 
+      // Full-window view: collect the chosen window with NO historical dedup,
+      // curate, and display the markdown in-tab. Display-only: the server
+      // neither writes a digest file nor updates seen state.
+      const fullCollect = async () => {
+        setBusy('full'); setError('')
+        try {
+          const data = await api('POST', '/inference-news/generate', { mode: 'full', ageHours: windowHours })
+          setView({ date: data.scope || ('全量视图 · 近 ' + windowHours + ' 小时'), full: true, markdown: data.markdown })
+        } catch (e) { setError(String(e.message || e)) }
+        setBusy('')
+      }
+
       const btn = (label, onClick, disabled, style) => React.createElement('button', {
         type: 'button',
         onClick,
@@ -217,7 +230,8 @@ window.__ModuleLoader__.load({
         return React.createElement('div', { style: { padding: 10, overflow: 'auto', height: '100%' } },
           React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' } },
             btn('← 返回列表', () => setView(null), false),
-            React.createElement('span', { style: { fontSize: 12, opacity: 0.7 } }, view.date)),
+            React.createElement('span', { style: { fontSize: 12, opacity: 0.7 } }, view.date),
+            view.full ? React.createElement('span', { style: { fontSize: 11, opacity: 0.5 } }, '（全量视图：未落盘、未更新去重状态）') : null),
           React.createElement('div', null, renderMarkdown(view.markdown)))
       }
 
@@ -225,6 +239,14 @@ window.__ModuleLoader__.load({
         React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' } },
           React.createElement('span', { style: { fontSize: 13, fontWeight: 700 } }, '📰 推理日报'),
           React.createElement('div', { style: { flex: 1 } }),
+          React.createElement('select', {
+            value: windowHours,
+            onChange: (e) => setWindowHours(Number(e.target.value)),
+            disabled: busy !== '',
+            style: { background: T.bg, color: 'inherit', border: '1px solid ' + T.border, borderRadius: 6, padding: '4px 6px', fontSize: 12 },
+          }, [24, 48, 72, 168].map((h) =>
+            React.createElement('option', { key: h, value: h }, h === 168 ? '近 7 天' : '近 ' + h + ' 小时'))),
+          btn(busy === 'full' ? '⏳ 采集中…' : '🔍 全量', fullCollect, busy !== ''),
           btn(busy === 'gen' ? '⏳ 生成中…' : '⚡ 生成今日日报', generate, busy !== '', { border: '1px solid ' + T.borderStrong })),
         error ? React.createElement('div', { style: { color: T.danger, fontSize: 12, marginBottom: 8 } }, '⚠ ' + error) : null,
         busy === 'list' ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6 } }, '加载中…') : null,
@@ -247,7 +269,7 @@ window.__ModuleLoader__.load({
               React.createElement('span', { style: { opacity: 0.55, fontWeight: 400 } }, (d.size / 1024).toFixed(1) + ' KB')),
             (d.headlines || []).slice(0, 2).map((h, i) =>
               React.createElement('div', { key: i, style: { fontSize: 11.5, opacity: 0.8, marginTop: 3, lineHeight: 1.45 } }, (i + 1) + '. ' + h)))),
-        busy === 'gen' ? React.createElement('div', { style: { fontSize: 11.5, opacity: 0.6, marginTop: 6, lineHeight: 1.5 } }, '采集 30+ 源 + LLM 筛选，通常 2–5 分钟…') : null)
+        (busy === 'gen' || busy === 'full') ? React.createElement('div', { style: { fontSize: 11.5, opacity: 0.6, marginTop: 6, lineHeight: 1.5 } }, busy === 'full' ? '全量采集（不做历史去重）+ LLM 筛选，通常 2–5 分钟…' : '采集 30+ 源 + LLM 筛选，通常 2–5 分钟…') : null)
     }
 
     function apply(ctx) {

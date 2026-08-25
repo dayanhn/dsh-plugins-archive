@@ -21,7 +21,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import path from 'node:path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { runCollect, recordSeen } from './collect.js'
+import { runCollect, recordSeen, normUrl, scoreItem } from './collect.js'
 import { curateItems, renderDigest, writeDigest, digestDate } from './digest.js'
 
 export const name = 'dsh-inference-news'
@@ -102,30 +102,122 @@ export async function apply(ctx, config) {
   }
   const stream = (opts) => ctx.llm.stream({ ...llmRoute(), ...opts })
 
+  const FULL_MAX_ITEMS = 500
+
   // One pipeline at a time per process (the GUI button and a concurrent
   // /news must not write the same day's file twice).
   let generating = false
 
-  async function runDigest({ signal } = {}) {
+  /**
+   * Optional web-search augmentation (parity with the M0 skill's 热点补充
+   * step): the 39 deterministic sources miss Chinese media, community PRs
+   * and vendor posts that only search surfaces. Two queries, capped at 10
+   * scored items; a search failure degrades to a footer entry, never aborts.
+   */
+  async function webAugment({ signal } = {}) {
+    const web = ctx.get('web')
+    const t0 = Date.now()
+    if (!web || typeof web.search !== 'function') {
+      return { items: [], source: { name: 'WebSearch', status: 'skipped', error: 'web 服务不可用', ms: Date.now() - t0 } }
+    }
+    try {
+      const queries = ['大模型推理 最新 进展 发布', 'LLM inference engine release']
+      const raw = []
+      const keys = new Set()
+      for (const q of queries) {
+        const r = await web.search({ query: q, maxResults: 8 }, signal)
+        for (const s of r.sources || []) {
+          const key = normUrl(s.url)
+          if (!key || keys.has(key)) continue
+          keys.add(key)
+          raw.push({
+            kind: 'blog',
+            source: 'WebSearch',
+            title: s.title || s.url,
+            url: s.url,
+            snippet: String(s.snippet || '').slice(0, 400),
+            publishedAt: s.publishedAt || new Date().toISOString(),
+          })
+        }
+      }
+      const items = raw
+        .map((it) => { const { score, matched } = scoreItem([it.title, it.snippet].join(' ')); return { ...it, score, matched } })
+        .filter((it) => it.score >= 1)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+      return { items, source: { name: 'WebSearch', status: 'ok', fetched: items.length, ms: Date.now() - t0 } }
+    } catch (err) {
+      return { items: [], source: { name: 'WebSearch', status: 'error', error: String((err && err.message) || err), ms: Date.now() - t0 } }
+    }
+  }
+
+  /** Merge web-search items into a collected result (dedupe by normalized URL). */
+  function mergeWeb(collected, web) {
+    const items = collected.items || []
+    const keys = new Set(items.map((it) => normUrl(it.url)))
+    for (const it of web.items) {
+      const key = normUrl(it.url)
+      if (keys.has(key)) continue
+      keys.add(key)
+      items.push(it)
+    }
+    items.sort((a, b) => b.score - a.score || Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0))
+    collected.items = items
+    collected.sources = [...(collected.sources || []), web.source]
+    collected.itemCount = items.length
+    return items
+  }
+
+  /**
+   * The digest pipeline.
+   * @param mode 'daily' (default): seen-dedup, same-day union (URLs already in
+   *   today's digest re-enter the pool), writes digests/YYYY-MM-DD.md and
+   *   updates seen state. 'full': a display-only window view — no seen
+   *   dedup at all, no file write, no seen update; the markdown comes back
+   *   to the caller (sidebar tab / tool result).
+   * @param ageHours window override (full mode takes the user's choice).
+   */
+  async function runDigest({ signal, mode = 'daily', ageHours } = {}) {
     if (generating) throw new Error('日报正在生成中，请稍候再试')
     generating = true
     try {
+      const full = mode === 'full'
       const date = digestDate(config.timezone)
-      const collected = await runCollect({ out: cacheFile, ageHours: config.ageHours, state: stateFile, maxItems: config.maxItems })
+      const hours = Number(ageHours) > 0 ? Number(ageHours) : config.ageHours
+      let reincludeUrls = []
+      if (!full) {
+        const existing = path.join(outputDir, date + '.md')
+        if (existsSync(existing)) {
+          reincludeUrls = [...readFileSync(existing, 'utf8').matchAll(/https?:\/\/[^)\]\s>"'，。、；]+/g)].map((m) => m[0])
+        }
+      }
+      const collected = await runCollect({
+        out: cacheFile,
+        ageHours: hours,
+        state: full ? '' : stateFile,
+        maxItems: full ? FULL_MAX_ITEMS : config.maxItems,
+        reincludeUrls,
+      })
+      mergeWeb(collected, await webAugment({ signal }))
       const items = collected.items || []
       if (!items.length) throw new Error('未采集到任何候选条目（各源状态见 .cache/candidates.json）')
       const data = await curateItems(items.slice(0, MAX_CANDIDATES_TO_CURATE), { stream, signal, maxTokens: config.curationMaxTokens })
-      const markdown = renderDigest({ date, config, data, collected })
-      const file = writeDigest({ outputDir, date, markdown })
-      recordSeen({ updateSeen: file, state: stateFile })
-      return {
+      const scope = full ? '全量视图 · 近 ' + hours + ' 小时' : ''
+      const markdown = renderDigest({ date, config, data, collected, scope })
+      const result = {
         date,
-        path: file,
+        scope,
         markdown,
+        mode: full ? 'full' : 'daily',
         headlines: (data.headlines || []).map((h) => h.title).slice(0, 3),
         itemCount: items.length,
         sources: collected.sources || [],
       }
+      if (full) return result
+      const file = writeDigest({ outputDir, date, markdown })
+      recordSeen({ updateSeen: file, state: stateFile })
+      result.path = file
+      return result
     } finally {
       generating = false
     }
@@ -139,25 +231,38 @@ export async function apply(ctx, config) {
 
   const newsCollect = defineTool({
     name: 'news_collect',
-    description: '采集近 N 小时的大模型推理候选资讯（arXiv / HF Daily Papers / 开源引擎 GitHub releases，含 vLLM-Ascend 与华为昇腾系 MindIE/MindSpeed/torch_npu / 技术博客 / Hacker News），返回按推理关键词打分的候选列表与各源状态。只读，零 LLM 成本；想深挖时用返回的候选自行筛选。',
-    parameters: {},
+    description: '采集近 N 小时的大模型推理候选资讯（arXiv / HF Daily Papers / 开源引擎 GitHub releases，含 vLLM-Ascend 与华为昇腾系 MindIE/MindSpeed/torch_npu / 技术博客 / Hacker News / web 搜索补充），返回按推理关键词打分的候选列表与各源状态。只读，零 LLM 成本；想深挖时用返回的候选自行筛选。',
+    parameters: {
+      ageHours: { type: 'integer', description: '时间窗（小时），6–336；缺省用插件配置（默认 72）' },
+    },
     output: textOut,
-    async execute(_args, exec) {
-      const c = await runCollect({ out: cacheFile, ageHours: config.ageHours, state: stateFile, maxItems: config.maxItems })
+    async execute(args, exec) {
+      const hours = Number(args && args.ageHours) > 0 ? Number(args.ageHours) : config.ageHours
+      const c = await runCollect({ out: cacheFile, ageHours: hours, state: stateFile, maxItems: config.maxItems })
+      mergeWeb(c, await webAugment({ signal: exec.signal }))
       const src = (c.sources || []).map((s) => (s.status === 'ok' ? '✅ ' : '❌ ') + s.name + (s.status === 'ok' ? ' (' + s.fetched + ' 条)' : ' ' + (s.error || ''))).join('\n')
       const top = JSON.stringify((c.items || []).slice(0, 40), null, 1)
-      return { ok: true, text: '共 ' + c.itemCount + ' 条候选\n\n各源状态：\n' + src + '\n\n候选列表（前 40，JSON）：\n' + top }
+      return { ok: true, text: '共 ' + c.itemCount + ' 条候选（近 ' + hours + ' 小时）\n\n各源状态：\n' + src + '\n\n候选列表（前 40，JSON）：\n' + top }
     },
     timeoutMs: 420000,
   })
 
   const newsDigest = defineTool({
     name: 'news_digest',
-    description: '生成今日大模型推理日报：采集 → LLM 筛选 → 写入 digests/YYYY-MM-DD.md → 更新去重状态。耗时数分钟；同一天重复调用会覆盖当天日报。需要用户要求生成日报/新闻日报时使用。',
-    parameters: {},
+    description: '生成大模型推理日报。mode=daily（默认）：采集（去重 + 同日并集）→ LLM 筛选 → 写入 digests/YYYY-MM-DD.md → 更新去重状态，同一天重复调用会合并覆盖当天日报。mode=full：按 ageHours 时间窗全量采集（完全不做历史去重）→ LLM 筛选 → 直接返回 Markdown，不落盘、不更新去重状态（适合“看看最近 N 小时/天推理圈全部动静”这类请求）。耗时数分钟。',
+    parameters: {
+      mode: { type: 'string', enum: ['daily', 'full'], description: "'daily'（默认）或 'full'（全量视图：不去重、不落盘、返回 markdown）" },
+      ageHours: { type: 'integer', description: '时间窗（小时），6–336；full 模式建议 24/48/72/168；daily 模式缺省用插件配置' },
+    },
     output: textOut,
-    async execute(_args, exec) {
-      const r = await runDigest({ signal: exec.signal })
+    async execute(args, exec) {
+      const r = await runDigest({ signal: exec.signal, mode: args && args.mode === 'full' ? 'full' : 'daily', ageHours: args && args.ageHours })
+      if (r.mode === 'full') {
+        return {
+          ok: true,
+          text: '全量视图（' + r.scope + '，候选 ' + r.itemCount + ' 条；未落盘、未更新去重状态）：\n\n' + r.markdown,
+        }
+      }
       return {
         ok: true,
         text: '日报已生成：' + r.path + '\n候选 ' + r.itemCount + ' 条。头条：\n' + r.headlines.map((h, i) => (i + 1) + '. ' + h).join('\n'),
@@ -235,11 +340,15 @@ export async function apply(ctx, config) {
             return sendJson(res, 200, { ok: true, date: seg[1], markdown: md, headlines: extractHeadlines(md) })
           }
           if (req.method === 'POST' && seg[0] === 'generate' && seg.length === 1) {
+            const body = JSON.parse((await readBody(req)) || '{}')
             const ac = new AbortController()
             const timer = setTimeout(() => ac.abort(), config.generateTimeoutMs)
             try {
-              const r = await runDigest({ signal: ac.signal })
-              return sendJson(res, 200, { ok: true, date: r.date, path: r.path, headlines: r.headlines, itemCount: r.itemCount })
+              const r = await runDigest({ signal: ac.signal, mode: body.mode === 'full' ? 'full' : 'daily', ageHours: body.ageHours })
+              const out = { ok: true, date: r.date, scope: r.scope, mode: r.mode, headlines: r.headlines, itemCount: r.itemCount, sources: r.sources }
+              if (r.mode === 'full') out.markdown = r.markdown
+              else out.path = r.path
+              return sendJson(res, 200, out)
             } finally {
               clearTimeout(timer)
             }

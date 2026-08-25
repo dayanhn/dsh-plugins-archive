@@ -25,17 +25,17 @@ const PROMPT_LINES = [
   '',
   '请输出如下结构的 JSON（只输出 JSON，不要任何其他文字、不要代码块围栏）：',
   '{',
-  '  "headlines": [{"title": "…", "why": "一句话为什么重要", "links": ["url", "…"]}],',
-  '  "releases": [{"repo": "项目名", "version": "版本号", "date": "MM-DD", "link": "url", "bullets": ["中文变更点", "…"]}],',
-  '  "papers": [{"title": "论文标题（保留原文）", "link": "url", "category": "cs.xx 或 —", "note": "一句话中文点评（20–40 字，基于摘要）"}],',
-  '  "community": [{"title": "标题", "link": "url", "stats": "▲ 分数 / N 评论", "note": "一句话为什么值得关注"}],',
+  '  "headlines": [{"title": "…", "why": "1–2 句为什么重要（可含关键数字与背景）", "links": ["url", "…"]}],',
+  '  "releases": [{"repo": "项目名", "version": "版本号", "date": "MM-DD", "link": "url", "bullets": ["中文变更点（3–8 条，含性能数字/影响面）", "…"]}],',
+  '  "papers": [{"title": "论文标题（保留原文）", "link": "url", "category": "cs.xx 或 —", "note": "中文点评（60–100 字：方法要点 / 关键结果 / 对推理部署的意义，基于摘要）"}],',
+  '  "community": [{"title": "标题", "link": "url", "stats": "▲ 分数 / N 评论", "note": "中文说明（60–100 字：为什么值得关注，可含背景）"}],',
   '  "note": "可选：数据来源状态或特殊情况说明"',
   '}',
   '',
   '规则：',
   '1. headlines 必须恰好 3 条，从全量候选里挑最重要的（重大 release / 高影响力论文 / 热议事件）。',
-  '2. releases：只保留窗口内有实质变更的 release，按项目分组（每个项目一条，bullets 列具体变更）；没有就空数组。',
-  '3. papers：5–10 篇，优先分数高且重要的，宁缺毋滥；没有就空数组。',
+  '2. releases：只保留窗口内有实质变更的 release，按项目分组（每个项目一条，bullets 3–8 条列具体变更与数字）；没有就空数组。',
+  '3. papers：5–12 篇，优先分数高且重要的，宁缺毋滥；没有就空数组。',
   '4. community：3–5 条；没有就空数组。',
   '5. 所有 title 与 link 必须取自候选条目，URL 逐字复制候选中的链接，严禁编造 URL 或内容。',
   '6. 点评与变更点必须基于摘要内容；摘要为空或明显与推理无关的条目应排除。',
@@ -139,18 +139,24 @@ function mdEscapeCell(s) {
   return String(s || '').replace(/\|/g, '\\|').replace(/\n/g, ' ')
 }
 
-/** Deterministic digest markdown from curated data + collection stats. */
-export function renderDigest({ date, config, data, collected }) {
+/**
+ * Deterministic digest markdown from curated data + collection stats.
+ * @param scope optional view label appended to the title (e.g. a full-window
+ *   view); when set, a footer note explains the view is display-only
+ *   (no historical dedup, not written to disk, seen state untouched).
+ */
+export function renderDigest({ date, config, data, collected, scope }) {
   const L = []
-  L.push('# 📰 大模型推理日报 · ' + headerDate(date, config.timezone))
+  L.push('# 📰 大模型推理日报 · ' + headerDate(date, config.timezone) + (scope ? ' · ' + scope : ''))
   L.push('')
+  const hostOf = (u) => { try { return new URL(String(u)).hostname.replace(/^www\./, '') } catch { return '链接' } }
   const hl = (data.headlines || []).slice(0, 3)
   if (hl.length) {
     L.push('> **今日要点**')
     L.push('>')
     for (let i = 0; i < hl.length; i++) {
       const h = hl[i]
-      const links = (h.links || []).slice(0, 3).map((u) => '[' + (String(u).replace(/\//g, '') || '链接') + '](' + u + ')')
+      const links = (h.links || []).slice(0, 3).map((u) => '[' + hostOf(u) + '](' + u + ')')
       const linkTxt = links.length ? '（' + links.join(' / ') + '）' : ''
       L.push('> ' + (i + 1) + '. **' + h.title + '**' + (h.why ? ' — ' + h.why : '') + linkTxt)
     }
@@ -224,6 +230,10 @@ export function renderDigest({ date, config, data, collected }) {
   if (data.note) {
     L.push('')
     L.push('备注：' + data.note)
+  }
+  if (scope) {
+    L.push('')
+    L.push('备注：' + scope + '——不做历史去重，仅呈现时间窗内入选条目；本视图不落盘、不更新去重状态。')
   }
   L.push('')
   L.push('</details>')
