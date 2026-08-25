@@ -12,10 +12,10 @@ DeepSeek Harness 插件（原版，非上游 fork）：每天聚合大模型**�
 
 ## 安装（web profile，本归档约定）
 
-${F}sh
+```sh
 cd ~/.dsh/profiles/web
 pnpm add "dsh-inference-news@link:<本仓库路径>/dsh-inference-news"
-${F}
+```
 
 然后把 `dsh-inference-news` 追加到该 profile `package.json` 的 `dsh.profile.bundles` 数组，重启 dsh web 实例 + 浏览器 F5。
 
@@ -23,7 +23,7 @@ headless profile（cron 用）同理：`cd ~/.dsh/profiles/headless && pnpm add 
 
 ## 配置
 
-行配置缺省即可运行（全部字段有默认值）；patch 层替换整行 config 时需重写全部字段。
+行配置缺省即可运行（全部字段有默认值）；profile patch 层可以只写要覆盖的字段，未写字段走插件默认值。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ headless profile（cron 用）同理：`cd ~/.dsh/profiles/headless && pnpm add 
 | timezone | Asia/Shanghai | 日报日期时区 |
 | llmProvider / llmModel | 空 | 筛选 LLM 路线；空 = 部署默认（agentDefaultModel.currentSelection） |
 | curationMaxTokens | 16384 | 筛选调用的**输出** token 预算（上下文窗口 ≠ 输出预算；thinking 模型的推理 token 也计入该预算） |
-| curationReasoningEffort | off | 筛选调用的推理强度；机械抽取任务默认 off（整个输出预算留给 JSON）。空串 = 不覆盖，沿用部署默认（xhigh 下会耗尽预算） |
+| curationReasoningEffort | off | 筛选调用的推理强度。off = 零思考，快且稳定，但点评深度下降（27B 实测）；空串 = 沿用部署默认（如 xhigh），此时 curationMaxTokens 需相应加大（思考 token 与正文共享输出预算） |
 | commandName | news | 斜杠命令名 |
 | generateTimeoutMs | 600000 | news_digest / 生成端点协作超时 |
 
@@ -43,9 +43,9 @@ headless profile（cron 用）同理：`cd ~/.dsh/profiles/headless && pnpm add 
 
 ## 每日定时（cron）
 
-${F}cron
+```cron
 0 9 * * * /home/zzw/work/news/news-daily.sh >> /home/zzw/work/news/logs/cron.log 2>&1
-${F}
+```
 
 `news-daily.sh` 以 headless profile 运行一个 agent 轮次调用 `news_digest`（需 `DSH_PERMISSION_MODE=danger-full-access`，cron 无人应答审批）。
 
