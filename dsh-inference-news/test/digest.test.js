@@ -6,7 +6,14 @@ import path from 'node:path'
 import { parseCuration, buildCurationPayload, renderDigest, writeDigest, digestDate, headerDate, curateItems, fullViewName } from '../lib/digest.js'
 
 const SAMPLE = {
-  headlines: [{ title: 'T1', why: 'w', links: ['https://a.b/c'] }],
+  headlines: [
+    { title: 'T1', why: 'w', links: ['https://a.b/c'] },
+    { title: 'T2', why: 'w', links: [] },
+    { title: 'T3', why: 'w', links: [] },
+    { title: 'T4', why: 'w', links: [] },
+    { title: 'T5', why: 'w', links: [] },
+    { title: 'T6', why: 'w', links: [] },
+  ],
   releases: [{ repo: 'vLLM', version: 'v0.28.0', date: '08-24', link: 'https://g.h/r', bullets: ['b1', 'b2'] }],
   blogs: [{ title: 'Blog | Post', link: 'https://b.c/d', source: 'NVIDIA Dev Blog', date: '08-24', bullets: ['要点 1', '要点 2'] }],
   papers: [
@@ -30,7 +37,7 @@ const COLLECTED = {
 
 test('parseCuration: plain JSON', () => {
   const data = parseCuration(JSON.stringify(SAMPLE))
-  assert.equal(data.headlines.length, 1)
+  assert.equal(data.headlines.length, 6)
   assert.equal(data.note, '')
 })
 
@@ -59,6 +66,7 @@ test('renderDigest: full structure, pipe escaping, empty sections, source footer
   const md = renderDigest({ date: '2026-08-25', config: { timezone: 'Asia/Shanghai' }, data: SAMPLE, collected: COLLECTED })
   assert.ok(md.startsWith('# 📰 大模型推理日报 · 2026年8月25日'), md.slice(0, 60))
   assert.ok(md.includes('> 1. **T1** — w'))
+  assert.ok(md.includes('> 6. **T6** — w'), 'six headlines rendered, not capped at three')
   assert.ok(md.includes('### vLLM'))
   assert.ok(md.includes('- **v0.28.0** · 08-24 · [Release](https://g.h/r)'))
   assert.ok(md.includes('## 📝 技术博客'))

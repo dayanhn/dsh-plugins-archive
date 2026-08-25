@@ -233,7 +233,7 @@ export async function apply(ctx, config) {
         scope,
         markdown,
         mode: full ? 'full' : 'daily',
-        headlines: (data.headlines || []).map((h) => h.title).slice(0, 3),
+        headlines: (data.headlines || []).map((h) => h.title).slice(0, 6),
         itemCount: items.length,
         sources: collected.sources || [],
       }

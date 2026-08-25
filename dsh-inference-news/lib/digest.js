@@ -34,7 +34,7 @@ const PROMPT_LINES = [
   '}',
   '',
   '规则：',
-  '1. headlines 必须恰好 3 条，从全量候选里挑最重要的（重大 release / 高影响力论文 / 热议事件）。',
+  '1. headlines 必须恰好 6 条，从全量候选里挑最重要的（重大 release / 高影响力论文 / 厂商博客 / 热议事件），按重要性降序排列，尽量覆盖不同类型、不得重复。',
   '2. releases：只保留窗口内有实质变更的 release，按项目分组（每个项目一条，bullets 3–8 条列具体变更与数字）；没有就空数组。',
   '3. papers：5–12 篇，优先分数高且重要的，宁缺毋滥；没有就空数组。',
   '4. blogs：重要技术博客（厂商官方博客 / 行业深度分析 / 媒体报道），至多 5 条，每条 bullets 2–5 条；没有就空数组。',
@@ -152,7 +152,7 @@ export function renderDigest({ date, config, data, collected, scope }) {
   L.push('# 📰 大模型推理日报 · ' + headerDate(date, config.timezone) + (scope ? ' · ' + scope : ''))
   L.push('')
   const hostOf = (u) => { try { return new URL(String(u)).hostname.replace(/^www\./, '') } catch { return '链接' } }
-  const hl = (data.headlines || []).slice(0, 3)
+  const hl = (data.headlines || []).slice(0, 6)
   if (hl.length) {
     L.push('> **今日要点**')
     L.push('>')
