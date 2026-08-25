@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { parseCuration, buildCurationPayload, renderDigest, writeDigest, digestDate, headerDate } from '../lib/digest.js'
+import { parseCuration, buildCurationPayload, renderDigest, writeDigest, digestDate, headerDate, curateItems } from '../lib/digest.js'
 
 const SAMPLE = {
   headlines: [{ title: 'T1', why: 'w', links: ['https://a.b/c'] }],
@@ -77,6 +77,42 @@ test('writeDigest: same-day file written, content round-trips', () => {
   const f2 = writeDigest({ outputDir: dir, date: '2026-08-25', markdown: '# y' })
   assert.equal(f1, f2)
   assert.equal(readFileSync(f1, 'utf8'), '# y')
+})
+
+test('curateItems: collects text-deltas, sends a well-formed Message, parses the JSON', async () => {
+  let seen
+  const stream = async function* (opts) {
+    seen = opts
+    const full = JSON.stringify(SAMPLE)
+    for (const piece of [full.slice(0, 20), full.slice(20)]) yield { type: 'text-delta', text: piece }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const data = await curateItems([{ kind: 'paper', title: 'T', url: 'https://x.y' }], { stream, signal: new AbortController().signal })
+  assert.equal(data.papers.length, 2)
+  const m = seen.messages[0]
+  assert.equal(m.role, 'user')
+  assert.ok(typeof m.id === 'string' && m.id.length >= 32, 'branded string id')
+  assert.ok(Array.isArray(m.content) && m.content[0].type === 'text', 'ContentBlock[] content')
+  assert.deepEqual(m.source, { kind: 'user' })
+  assert.equal(seen.temperature, 0)
+  assert.equal(seen.maxTokens, 16384)
+})
+
+test('curateItems: surfaces adapter finish errors with the real failure', async () => {
+  const stream = async function* () {
+    yield { type: 'finish', reason: { kind: 'error', failure: { code: 'PROVIDER_ERROR', message: 'boom local model' } } }
+  }
+  await assert.rejects(
+    curateItems([{ kind: 'paper', title: 'T', url: 'u' }], { stream, signal: new AbortController().signal }),
+    /boom local model/,
+  )
+})
+
+test('curateItems: aborted and empty finishes throw specific errors', async () => {
+  const aborted = async function* () { yield { type: 'finish', reason: { kind: 'aborted' } } }
+  await assert.rejects(curateItems([], { stream: aborted, signal: new AbortController().signal }), /被中止/)
+  const empty = async function* () { yield { type: 'finish', reason: { kind: 'stop' } } }
+  await assert.rejects(curateItems([], { stream: empty, signal: new AbortController().signal }), /未返回内容/)
 })
 
 test('digestDate / headerDate respect the zone', () => {

@@ -1,6 +1,7 @@
 // dsh-inference-news — digest curation (auxiliary LLM call) and deterministic
 // markdown rendering.
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 
 /** Today's YYYY-MM-DD in the configured zone. */
@@ -86,18 +87,44 @@ export function parseCuration(text) {
  * @param stream (options) => AsyncIterable<StreamChunk> — ctx.llm.stream with provider/model pre-bound.
  * @param signal AbortSignal.
  */
-export async function curateItems(items, { stream, signal }) {
+/**
+ * One user Message in the exact dsh-llm shape (message.ts): branded string
+ * id, ContentBlock[] content, { kind: 'user' } source. Built by hand (not
+ * createUserMessage) so this module stays dependency-free for the unit runner;
+ * the two are structurally identical at runtime.
+ */
+function curationMessage(userText) {
+  return {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text: userText }],
+    source: { kind: 'user' },
+  }
+}
+
+export async function curateItems(items, { stream, signal, maxTokens = 16384 }) {
   const user = '候选条目（共 ' + items.length + ' 条，按相关度降序）：\n\n' + buildCurationPayload(items) + '\n\n请严格按系统要求输出 JSON。'
   let text = ''
+  let finish = null
   for await (const chunk of stream({
     system: CURATION_SYSTEM,
-    messages: [{ role: 'user', content: user }],
+    messages: [curationMessage(user)],
     temperature: 0,
-    maxTokens: 4096,
+    maxTokens,
     signal,
   })) {
     if (chunk.type === 'text-delta') text += chunk.text
+    else if (chunk.type === 'finish') finish = chunk.reason
   }
+  // Adapter failures arrive as a terminal finish chunk, not a throw (the
+  // stream protocol normalizes them) — surface the real failure instead of
+  // misreading it as empty model output.
+  if (finish && finish.kind === 'error') {
+    const f = finish.failure || {}
+    throw new Error('LLM 筛选调用失败：' + (f.message || f.code || JSON.stringify(f)))
+  }
+  if (finish && finish.kind === 'aborted') throw new Error('LLM 筛选调用被中止')
+  if (!text.trim()) throw new Error('LLM 筛选调用未返回内容（finish: ' + JSON.stringify(finish) + '）')
   return parseCuration(text)
 }
 

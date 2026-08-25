@@ -46,6 +46,12 @@ export const Config = z.object({
   /** Curation LLM route; empty = the deployment default (agentDefaultModel). */
   llmProvider: z.string().default(''),
   llmModel: z.string().default(''),
+  /**
+   * Output token budget for the curation call. Thinking models spend most of
+   * it on reasoning before the JSON, so this must exceed the plain-model
+   * estimate (a 4K budget truncates a 27B thinking model's curation output).
+   */
+  curationMaxTokens: z.number().step(1).min(1024).max(131072).default(16384),
   /** Slash command name (without the leading slash). */
   commandName: z.string().default('news'),
   /** Cooperative timeout budget for news_digest / the generate endpoint. */
@@ -98,7 +104,7 @@ export async function apply(ctx, config) {
       const collected = await runCollect({ out: cacheFile, ageHours: config.ageHours, state: stateFile, maxItems: config.maxItems })
       const items = collected.items || []
       if (!items.length) throw new Error('未采集到任何候选条目（各源状态见 .cache/candidates.json）')
-      const data = await curateItems(items.slice(0, MAX_CANDIDATES_TO_CURATE), { stream, signal })
+      const data = await curateItems(items.slice(0, MAX_CANDIDATES_TO_CURATE), { stream, signal, maxTokens: config.curationMaxTokens })
       const markdown = renderDigest({ date, config, data, collected })
       const file = writeDigest({ outputDir, date, markdown })
       recordSeen({ updateSeen: file, state: stateFile })
@@ -171,7 +177,7 @@ export async function apply(ctx, config) {
 
   // ── webServer JSON routes (web profile only) ───────────────────────────────
   const webServer = ctx.get('webServer')
-  let routeDisposers = []
+  const routeDisposers = []
   if (webServer !== undefined) {
     const sendJson = (res, status, body) => {
       res.statusCode = status
@@ -235,12 +241,14 @@ export async function apply(ctx, config) {
         }
       },
     }
-    routeDisposers = [webServer.register(route)]
+    routeDisposers.push(webServer.register(route))
   }
 
-  ctx.effect(() => {
-    toolDisposers.forEach((d) => { try { d() } catch {} })
-    if (commandDisposer) { try { commandDisposer() } catch {} }
-    routeDisposers.forEach((d) => { try { d() } catch {} })
+  // Registrations are effects: the setup returns the teardown disposer,
+  // which runs only when this plugin's fiber unmounts.
+  ctx.effect(() => () => {
+    toolDisposers.forEach((d) => d())
+    commandDisposer()
+    routeDisposers.forEach((d) => d())
   }, 'dsh-inference-news.dispose')
 }

@@ -34,6 +34,7 @@ headless profile（cron 用）同理：`cd ~/.dsh/profiles/headless && pnpm add 
 | maxItems | 120 | 候选上限（前 N 条送筛选） |
 | timezone | Asia/Shanghai | 日报日期时区 |
 | llmProvider / llmModel | 空 | 筛选 LLM 路线；空 = 部署默认（agentDefaultModel.currentSelection） |
+| curationMaxTokens | 16384 | 筛选调用的输出 token 预算（thinking 模型推理 + JSON 输出共占该预算，4K 会截断） |
 | commandName | news | 斜杠命令名 |
 | generateTimeoutMs | 600000 | news_digest / 生成端点协作超时 |
 

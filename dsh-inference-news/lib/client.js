@@ -268,7 +268,7 @@ window.__ModuleLoader__.load({
           console.warn('[dsh-inference-news] sidebar tab registration skipped:', e)
           return
         }
-        inner.effect(() => { try { disposer() } catch {} }, 'dsh-inference-news.sidebar')
+        inner.effect(() => () => { try { disposer() } catch {} }, 'dsh-inference-news.sidebar')
       })
     }
 
