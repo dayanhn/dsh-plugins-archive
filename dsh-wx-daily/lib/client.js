@@ -4,7 +4,9 @@
 //   • window picker (今天 / 近 3 天 / 近 7 天 / 自定义日期段) + 「⚡ 采集」
 //     (server-side: local 微信读书 session → window filter → optional LLM 要点)
 //   • aggregated article list, newest first, per-account status chips
-//     (double as filters); titles are real links (target _blank)
+//     (double as filters); titles are real links (target _blank); accounts
+//     with no updates render no group of their own — they are collapsed into
+//     a single trailing「无更新（N）：…」line
 //   • per-article on-demand summary button (body fetched on demand → one LLM
 //     call, thinking off, length model-decided); async, never blocks browsing
 //   • setup banner while the fetcher / dedicated WeRead Chrome is not ready
@@ -250,16 +252,20 @@ window.__ModuleLoader__.load({
       // 分组列表：每个号一组（accounts.json 顺序），组内 = 时间列 + 标题链接。
       // 文章按 configName 归组（it.account 是微信读书侧规范名，可能略有出入，
       // 只用于组内兜底显示，不参与分组）。
+      // 无更新的号（empty）不占分组行：合并成列表末尾一行「无更新（N）：…」，
+      // 省垂直空间；单号状态仍可从顶部 chips 看到（点 chip 过滤时原样提示）。
       const renderGroups = () => {
         const shown = accounts.filter((a) => !filter || a.name === filter)
         const els = []
         let visibleItems = 0
         let hasCollectable = false
+        const emptyNames = []
         for (const a of shown) {
           if (a.status === 'ok' || a.status === 'empty') hasCollectable = true
+          if (a.status === 'empty') { emptyNames.push(a.name); continue }
           const rows = ((data.items) || []).filter((it) => it.configName === a.name)
           visibleItems += rows.length
-          const sub = a.status === 'ok' ? a.count + ' 篇' : a.status === 'empty' ? '无更新' : a.status === 'nofeed' ? '未订阅' : '抓取失败'
+          const sub = a.status === 'ok' ? a.count + ' 篇' : a.status === 'nofeed' ? '未订阅' : '抓取失败'
           els.push(React.createElement('div', { key: 'gh-' + a.name, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 8px 4px' } },
             React.createElement('span', { style: { fontSize: 12, fontWeight: 600 } }, a.name),
             React.createElement('span', { style: { fontSize: 10.5, opacity: 0.5, whiteSpace: 'nowrap' } }, sub),
@@ -310,7 +316,14 @@ window.__ModuleLoader__.load({
         }
         if (visibleItems === 0 && hasCollectable) {
           els.push(React.createElement('div', { key: 'hint', style: { fontSize: 12, opacity: 0.6, padding: '8px 8px 0' } },
-            filter ? '该号在此时间窗内没有文章。' : '该时间窗内没有采集到文章（各号状态见分组标题）。'))
+            filter ? '该号在此时间窗内没有文章。' : '该时间窗内没有采集到文章（各号状态见上方 chips）。'))
+        }
+        // 无更新的号合并成一行（有 chip 过滤时不显示：过滤结果已由上方 hint 说明）。
+        if (!filter && emptyNames.length) {
+          els.push(React.createElement('div', {
+            key: 'empty-line',
+            style: { fontSize: 11, opacity: 0.5, padding: '10px 8px 2px', borderTop: '1px solid ' + T.border, marginTop: 2 },
+          }, '无更新（' + emptyNames.length + '）：' + emptyNames.join('、')))
         }
         return els
       }
