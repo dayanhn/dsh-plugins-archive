@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSummaryPayload, parseSummary, renderSummaryMarkdown, summarizeItems } from '../lib/summary.js'
+import { buildSummaryPayload, parseSummary, renderSummaryMarkdown, summarizeItems, summarizeArticle, ITEM_SUMMARY_SYSTEM, MAX_SUMMARY_BODY_CHARS } from '../lib/summary.js'
 
 const ITEMS = [
   { account: '数字生命卡兹克', title: 'Claude Code 深度实测', url: 'https://mp.weixin.qq.com/s/a1', publishedAt: '2026-08-25T09:30:00.000Z', summary: '三周体验，结论如下' },
@@ -69,4 +69,60 @@ test('summarizeItems: max-tokens without text gives the reasoning-budget hint', 
     summarizeItems(ITEMS, { stream: stubStream([{ type: 'finish', kind: 'max-tokens' }]) }),
     /summaryMaxTokens|reasoningEffort/,
   )
+})
+
+// ── per-article summary (panel button) ─────────────────────────────────────
+
+test('summarizeArticle: consumes text-delta chunks, returns the trimmed text', async () => {
+  const out = await summarizeArticle({
+    title: 't', account: 'a', text: '正文内容',
+    stream: stubStream([
+      { type: 'text-delta', text: '  摘要第一段。' },
+      { type: 'text-delta', text: '第二段。' },
+      { type: 'finish', kind: 'stop' },
+    ]),
+  })
+  assert.equal(out, '摘要第一段。第二段。')
+})
+
+test('summarizeArticle: empty body is rejected before any LLM call', async () => {
+  let called = false
+  const spy = (opts) => { called = true; return stubStream([])(opts) }
+  await assert.rejects(summarizeArticle({ text: '   ', stream: spy }), /正文为空/)
+  assert.equal(called, false)
+})
+
+test('summarizeArticle: terminal error / aborted / empty finish all throw', async () => {
+  await assert.rejects(
+    summarizeArticle({ text: 'x', stream: stubStream([{ type: 'finish', kind: 'error', failure: { message: 'boom' } }]) }),
+    /boom/,
+  )
+  await assert.rejects(
+    summarizeArticle({ text: 'x', stream: stubStream([{ type: 'finish', kind: 'aborted' }]) }),
+    /中止/,
+  )
+  await assert.rejects(
+    summarizeArticle({ text: 'x', stream: stubStream([{ type: 'finish', kind: 'stop' }]) }),
+    /未返回内容/,
+  )
+})
+
+test('summarizeArticle: max-tokens with text returns the (truncated) summary', async () => {
+  const out = await summarizeArticle({
+    text: 'x',
+    stream: stubStream([{ type: 'text-delta', text: '截断的摘要' }, { type: 'finish', kind: 'max-tokens' }]),
+  })
+  assert.equal(out, '截断的摘要')
+})
+
+test('summarizeArticle: long body is clipped, and the clip is disclosed in the prompt', async () => {
+  const body = '字'.repeat(MAX_SUMMARY_BODY_CHARS + 100)
+  let seenUser = ''
+  const spy = (opts) => { seenUser = opts.messages[0].content[0].text; return stubStream([{ type: 'text-delta', text: 's' }, { type: 'finish', kind: 'stop' }])(opts) }
+  await summarizeArticle({ title: 't', account: 'a', text: body, stream: spy })
+  assert.ok(seenUser.includes('后文略'))
+  const sent = seenUser.split('：\n').slice(1).join('：\n')
+  assert.ok(sent.startsWith(body.slice(0, MAX_SUMMARY_BODY_CHARS)))
+  assert.ok(!sent.includes('字'.repeat(MAX_SUMMARY_BODY_CHARS + 1)))
+  assert.match(ITEM_SUMMARY_SYSTEM, /不设固定字数/)
 })

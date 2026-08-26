@@ -152,6 +152,72 @@ export const LIST_SHELF_JS = `fetch("/web/shelf/sync?synckey=0&teenmode=0&album=
   .catch(function(e){ return JSON.stringify({ok:false, err:String(e).slice(0,80)}) })`;
 
 /**
+ * 取**某一篇**文章的正文。一次调用 = 一个 fetch,不含循环、不含间隔。
+ *
+ * 接口:/web/mp/content?reviewId=<rid>,rid 就是文章列表接口返回的 reviewId
+ * (形如 MP_WXS_<数字>_<originalId>)。与 buildPageJs 相同,必须在阅读器页
+ * 上下文里执行。
+ *
+ * 返回的是一整份微信文章页 HTML(约 1–2MB),正文以 JS 字符串字面量嵌在
+ * `content_noencode:` 字段里(实测为纯文本,段落用 \x0a 分隔)。页内直接
+ * 抽出来并解转义,只把文本(~几 KB)送回 Node,不传 HTML。
+ *
+ * ⚠️ 解转义用**单遍扫描**,不用正则链:连续正则处理 `\\x0a`(转义反斜杠 +
+ *    字面 "x0a")会误把后半个 x0a 解成换行。
+ *
+ * 返回契约与 buildPageJs 同口径:成功 {ok:true, chars, text},找不到字段
+ * {ok:false, err},页内异常 {ok:false, err}。都以 JSON.stringify 收尾。
+ *
+ * @param {string} rid 文章 reviewId
+ */
+export function buildContentJs(rid) {
+  return `(function(){
+  var rid = ${JSON.stringify(String(rid))};
+  return fetch('/web/mp/content?reviewId=' + encodeURIComponent(rid), {credentials:'include'})
+    .then(function(r){ return r.text(); })
+    .then(function(html){
+      var key = 'content_noencode:';
+      var ki = html.indexOf(key);
+      if (ki < 0) return JSON.stringify({ok:false, err:'正文位置变了:HTML(' + html.length + 'B)里找不到 content_noencode 字段'});
+      var i = ki + key.length;
+      while (i < html.length && ' \\t\\r\\n'.indexOf(html[i]) >= 0) i++;
+      var q = html[i];
+      if (q !== "'" && q !== '"') return JSON.stringify({ok:false, err:'正文位置变了:content_noencode 字段格式异常'});
+      i++;
+      var raw = '';
+      var BS = 92;
+      while (i < html.length) {
+        var c = html[i];
+        if (c.charCodeAt(0) === BS) { raw += c + html[i + 1]; i += 2; continue; }
+        if (c === q) break;
+        raw += c; i++;
+      }
+      var text = '';
+      for (var j = 0; j < raw.length; j++) {
+        var ch = raw[j];
+        if (ch.charCodeAt(0) !== BS) { text += ch; continue; }
+        var nx = raw[j + 1];
+        if (nx === 'x' || nx === 'u') {
+          var hexLen = nx === 'x' ? 2 : 4;
+          text += String.fromCharCode(parseInt(raw.slice(j + 2, j + 2 + hexLen), 16));
+          j += 1 + hexLen;
+        } else if ('ntrbfv'.indexOf(nx) >= 0) {
+          text += {n:'\\n',t:'\\t',r:'\\r',b:'\\b',f:'\\f',v:'\\v'}[nx];
+          j++;
+        } else if (nx === '\\\\' || nx === q || nx === '"' || nx === "'") {
+          text += nx;
+          j++;
+        } else {
+          text += ch;
+        }
+      }
+      return JSON.stringify({ok:true, chars:text.length, text:text});
+    })
+    .catch(function(e){ return JSON.stringify({ok:false, err:String(e).slice(0,80)}); });
+})()`;
+}
+
+/**
  * 把公众号加进书架(订阅)。同样在首页就能调用。
  * 重复添加已在书架里的号是幂等的,不会出错。
  *

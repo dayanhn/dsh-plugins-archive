@@ -1,10 +1,10 @@
 # dsh-wx-daily
 
-微信公众号文章面板：通过**本机微信读书会话**（专用 Chrome + [weread-mp-fetcher](https://github.com/Pengyf04/weread-mp-fetcher)，**无第三方 relay，会话不出本机**）抓取每个配置公众号的文章，按 **当天** 或 **自定义时间段** 过滤（每次全量重采，**不做历史去重**），可选一次 LLM「今日要点」摘要，在 dsh web 侧边栏「📮 公众号」tab 聚合展示，点标题在新标签页打开原文。
+微信公众号文章面板：通过**本机微信读书会话**（专用 Chrome + [weread-mp-fetcher](https://github.com/Pengyf04/weread-mp-fetcher)，**无第三方 relay，会话不出本机**）抓取每个配置公众号的文章，按 **当天** 或 **自定义时间段** 过滤（每次全量重采，**不做历史去重**），可选一次 LLM「今日要点」摘要，在 dsh web 侧边栏「📮 公众号」tab 聚合展示，点标题在新标签页打开原文。每篇文章可点「生成摘要」**按需**读取全文（微信读书 `/web/mp/content` 接口，不占采集配额）并生成 LLM 摘要（思考关闭、长度由模型定）；**无标题的文章直接过滤不显示**。
 
 - 模型工具 `wx_collect`（窗口过滤 + 可选摘要，零/一次 LLM 成本）
 - 人工命令 `/wx`（当天采集 + 摘要，无需模型轮次）
-- webServer 路由 `/wx-daily/*`（latest / collect / accounts / status）供侧边栏消费
+- webServer 路由 `/wx-daily/*`（latest / collect / accounts / status / summarize）供侧边栏消费
 
 默认清单来自 2026-06-16 的《2026 年，AI 公众号博主排行榜 TOP20》（20 个号），内置在 `accounts.default.json`。
 
@@ -18,12 +18,21 @@
    ↑ CDP
 weread-mp-fetcher (node bin/weread.mjs, 零 npm 依赖)
    stdout=JSON 结果 / stderr=进度, 内置每日配额闸门(默认 2 次/天, 40 请求/天)
+   --pages 抓文章列表(耗配额) / --content <rid> 取单篇正文(免费)
    ↑ 子进程
-dsh-wx-daily 插件(host: lib/index.js + collect.js)
-   按 bookId 对号 → 窗口过滤 → LLM 摘要(可选) → dataDir/latest.json(每次覆盖)
+dsh-wx-daily 插件(host: lib/index.js + collect.js + summary.js)
+   按 bookId 对号 → 窗口过滤 → 无标题条目剔除 → latest.json(每次覆盖)
+   批量要点摘要(可选, 一次 LLM) / 单篇摘要(按需, 一次 LLM, 思考关)
    ↑  /wx-daily/*
 dsh web 侧边栏「📮 公众号」tab (client: lib/client.js)
+   列表行内「生成摘要」按钮(异步, 生成时可继续浏览)
 ```
+
+单篇正文通道：`GET /web/mp/content?reviewId=<rid>`（rid = 文章列表接口
+`items[].rid`），在阅读器页上下文里页内 fetch，返回整份微信文章页 HTML，
+正文在 `content_noencode` 字段里（纯文本）。不走 `mp.weixin.qq.com` 直连
+——该域名对本机 IP 有「环境异常」验证码风控（2026-08-25 实测），微信读书
+侧等价于「用户读一篇文章」，无风控问题。
 
 为什么走微信读书：搜狗微信对多数头部公众号不收录（公众号可关闭搜狗索引），
 实测卡兹克/花叔等号几乎搜不到本人文章；微信读书把公众号当「书」收录
@@ -78,13 +87,20 @@ profile 目录里长期保持）。同一 profile 同时只能有一个 Chrome �
 - **侧边栏**：选时间窗（今天 / 近 3 天 / 近 7 天 / 自定义日期段）→「⚡ 采集」；
   顶部 chips 按号过滤（✅n 条 / — 无更新 / ⚠ 未订阅 / ❌ 错误，hover 看错误）；
   勾选「含 LLM 摘要」时顶部显示要点块。
+- **单篇摘要**：每篇标题右侧「生成摘要」按钮——读取该篇全文（微信读书正文
+  接口，免费）+ 一次 LLM 调用（思考关闭、长度由模型定），摘要完整内联显示在
+  标题下方。请求是异步的：生成期间可以继续浏览/点开其它文章，也可以同时给
+  多篇点生成。按钮随状态变化：生成摘要 → 生成中… → 重新生成（失败时「重试」）。
+  摘要只存面板会话状态，重新采集或刷新后清空。
 - **命令**：`/wx`（当天 + 摘要）。
 - **工具**：`wx_collect { window|from,to, withSummary }`。
 - **路由**：`GET /wx-daily/latest`、`GET /wx-daily/accounts`、
   `GET /wx-daily/status`（fetcher/专用 Chrome 连通性 + 已订阅号数诊断）、
-  `POST /wx-daily/collect { window|from,to, withSummary }`。
-- **配额**：请求预算 `maxRequestsPerDay` 是真正的闸门（22 号 × 1 页 = 22 请求/次）；
+  `POST /wx-daily/collect { window|from,to, withSummary }`、
+  `POST /wx-daily/summarize { rid | url+configName, title }`（单篇全文 + LLM 摘要）。
+- **配额**：请求预算 `maxRequestsPerDay` 是真正的闸门（23 号 × 1 页 = 23 请求/次）；
   `maxRunsPerDay` 只是次数上限。超配额时采集报「今日采集配额已用完」——是防风控闸门，不是故障。
+  单篇正文（`--content`）不占配额：等价于用户在微信读书里读一篇文章。
 - **故障隔离**：单个号的出错（微信读书接口对该号报错等）只把该号标 ❌，
   不影响其它号的结果。CDP 通道本身断开时，fetcher 熔断器在连续 2 次失败后停止，
   未及采集的号标 ❌「未尝试」——重新采集即可。
@@ -148,7 +164,8 @@ profile 目录里长期保持）。同一 profile 同时只能有一个 Chrome �
 
 - `dataDir/accounts.json` — 公众号清单（唯一需要日常编辑的文件）。
 - `dataDir/latest.json` — 最近一次采集结果（**每次覆盖**，含 `summary` 与
-  `summaryError` 字段；无 seen / 无去重状态）。
+  `summaryError` 字段；无 seen / 无去重状态）。`items[]` 每条带 `rid`
+  （单篇正文接口的键）；无标题条目在采集时已剔除。
 - `~/.weread-mp-fetcher/quota.json` — 采集器每日配额账本。
 
 ## 排障
@@ -163,11 +180,17 @@ profile 目录里长期保持）。同一 profile 同时只能有一个 Chrome �
 | 白屏/打不开 weread.qq.com | 本机网络直连（勿带 socks 代理）；微信读书侧拦截 → 隔几小时再试 |
 | 窗口内明明有文章没采到 | 该号在微信读书侧收录滞后（平台问题，个别号滞后数天）；或 1 页不够 → `fetcherPages` 调大 |
 | 摘要「达到 max-tokens」 | 调大 `summaryMaxTokens`（本地大模型可给到 131072） |
+| 「生成摘要」报「这篇文章没有 rid」 | 面板数据是旧采集结果（items 无 rid）→ 重新「⚡ 采集」一次即可 |
+| 「生成摘要」报「正文位置变了」 | 微信读书正文接口的 HTML 结构变了 → 更新 fetcher 的 `buildContentJs`（`weread-mp-fetcher/lib/scripts.mjs`） |
+| 「生成摘要」报验证码/-2010/-2041 | 与列表采集同因：专用 Chrome 里手动过验证码 / 重新扫码 / 保持阅读器页常开 |
 
 ## 测试
 
 ```bash
 node --test test/collect.test.js test/summary.test.js
-# 21 个单测：时间窗 / fetcher 输出解析 / 配置合并 / 退出码映射 /
-# collect 管线（stub 子进程）/ 摘要
+# 27 个单测：时间窗 / fetcher 输出解析 / 配置合并 / 退出码映射 /
+# collect 管线（stub 子进程，含无标题过滤 + rid 透传）/ 批量摘要 / 单篇摘要
+
+# fetcher 侧（vendored，含本地修改）:
+node /home/zzw/code/tool/dsh-plugins-archive/weread-mp-fetcher/test/offline.test.mjs
 ```

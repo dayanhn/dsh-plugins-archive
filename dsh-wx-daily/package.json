@@ -1,7 +1,7 @@
 {
   "name": "dsh-wx-daily",
   "version": "0.1.0",
-  "description": "WeChat 公众号 article panel for DeepSeek Harness: pulls each configured account's articles from a local wewe-rss instance, filters by a same-day or custom date window (no dedup: every run re-collects), optionally summarizes with one auxiliary LLM call, and shows an aggregated clickable list in a sidebar 公众号 tab. Model tool wx_collect, /wx command, webServer routes /wx-daily/*.",
+  "description": "WeChat 公众号 article panel for DeepSeek Harness: pulls each configured account's articles through a LOCAL 微信读书 session (dedicated Chrome + weread-mp-fetcher, no third-party relay), filters by a same-day or custom date window (no dedup: every run re-collects), optionally summarizes with one auxiliary LLM call, supports per-article on-demand summaries (body via /web/mp/content + one LLM call, thinking off), drops untitled articles, and shows an aggregated clickable list in a sidebar 公众号 tab. Model tool wx_collect, /wx command, webServer routes /wx-daily/*.",
   "license": "MIT",
   "author": "zzw",
   "keywords": [

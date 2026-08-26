@@ -126,7 +126,7 @@ git push
 
 | 目录 | 上游 | 许可 | 用途 |
 |---|---|---|---|
-| `weread-mp-fetcher/` | [Pengyf04/weread-mp-fetcher](https://github.com/Pengyf04/weread-mp-fetcher)（零 npm 依赖，2026-08 活跃） | MIT | dsh-wx-daily 的采集引擎；本地改动：`start-chrome.sh`（专用 Chrome 启动脚本，DISPLAY 兜底 :0 + 剥离代理变量）、`config.json`（本机配置，accounts 字段由插件每次采集时同步）、`bin/weread.mjs` 入口（退出前等 stdout drain——上游 `process.exit` 会截断管道里未冲刷的大 JSON，实测 222KB 输出必截断，72 项离线测试全过） |
+| `weread-mp-fetcher/` | [Pengyf04/weread-mp-fetcher](https://github.com/Pengyf04/weread-mp-fetcher)（零 npm 依赖，2026-08 活跃） | MIT | dsh-wx-daily 的采集引擎；本地改动：`start-chrome.sh`（专用 Chrome 启动脚本，DISPLAY 兜底 :0 + 剥离代理变量）、`config.json`（本机配置，accounts 字段由插件每次采集时同步）、`bin/weread.mjs` 入口（退出前等 stdout drain——上游 `process.exit` 会截断管道里未冲刷的大 JSON，实测 222KB 输出必截断）、`lib/scripts.mjs` + `bin/weread.mjs`（新增 `--content <rid>` 单篇正文模式：阅读器页内 `GET /web/mp/content?reviewId=<rid>` 取整份文章 HTML，页内抽出 `content_noencode` 纯文本，不占每日配额；74 项离线测试全过） |
 
 注：早期方案 wewe-rss（[cooderl/wewe-rss](https://github.com/cooderl/wewe-rss)，上游已 archived）因依赖作者闭源 relay 托管微信读书会话，于 2026-08-25 停用并删除。
 

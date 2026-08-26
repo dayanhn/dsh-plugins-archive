@@ -145,6 +145,7 @@ test('collect: per-account statuses, window filter, newest-first items', async (
     'https://mp.weixin.qq.com/s/fixture-bbb222',
   ])
   assert.equal(r.items[0].configName, '数字生命卡兹克')
+  assert.equal(r.items[0].rid, 'r1')
   assert.match(r.accounts[3].error, /-2041/)
   assert.match(r.accounts[4].error, /缺 bookId/)
   // the disabled account never reaches the fetcher
@@ -153,6 +154,35 @@ test('collect: per-account statuses, window filter, newest-first items', async (
   const written = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'))
   assert.deepEqual(written.accounts.map((a) => a.bookId), ['MP_WXS_0001', 'MP_WXS_0002', 'MP_WXS_0003', 'MP_WXS_0004'])
   assert.equal(written.maxRequestsPerDay, 55)
+})
+
+test('collect: untitled articles are filtered out; rid passes through to items', async () => {
+  const dir = makeFetcherDir()
+  const json = JSON.stringify({
+    onReader: true,
+    meta: { pages: 1, requestsTotal: 1 },
+    sources: [{
+      name: '无标题测试号',
+      bookId: 'MP_WXS_7777',
+      items: [
+        { t: 1787640000, title: '', url: 'https://mp.weixin.qq.com/s/untitled-1', rid: 'MP_WXS_7777_u1' },
+        { t: 1787630000, title: '   ', url: 'https://mp.weixin.qq.com/s/untitled-2', rid: 'MP_WXS_7777_u2' },
+        { t: 1787620000, title: '有标题的文章', url: 'https://mp.weixin.qq.com/s/titled-3', rid: 'MP_WXS_7777_u3' },
+      ],
+      pagesFetched: 1,
+    }],
+  })
+  const r = await collect({
+    fetcherDir: dir,
+    accounts: [{ name: '无标题测试号', bookId: 'MP_WXS_7777' }],
+    window: { fromMs: 0, toMs: Number.MAX_SAFE_INTEGER, label: 'all' },
+    runImpl: async () => ({ code: 0, stdout: json, stderr: '' }),
+  })
+  assert.deepEqual(r.stats, { ok: 1, empty: 0, nofeed: 0, error: 0, items: 1 })
+  assert.equal(r.accounts[0].count, 1)
+  assert.equal(r.items.length, 1)
+  assert.equal(r.items[0].title, '有标题的文章')
+  assert.equal(r.items[0].rid, 'MP_WXS_7777_u3')
 })
 
 test('collect: quota-exhausted (exit 3) throws a run-level error', async () => {

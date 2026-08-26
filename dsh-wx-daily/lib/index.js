@@ -8,7 +8,8 @@
 //   • human command /wx: today's collection + summary from the GUI without a
 //     model turn,
 //   • webServer JSON routes (/wx-daily/*): latest view / collect / accounts /
-//     status — consumed by the sidebar 公众号 tab (client half).
+//     status / on-demand per-article summary — consumed by the sidebar
+//     公众号 tab (client half).
 //
 // Out-of-tree constraint: this plugin does NOT append custom session events
 // — the persistence read path refuses unknown event types that are not
@@ -20,8 +21,8 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs'
-import { collect, windowBounds } from './collect.js'
-import { summarizeItems, renderSummaryMarkdown } from './summary.js'
+import { collect, windowBounds, explainSrcErr, runFetcher, BOOK_ID_RE } from './collect.js'
+import { summarizeItems, renderSummaryMarkdown, summarizeArticle } from './summary.js'
 
 export const name = 'dsh-wx-daily'
 
@@ -158,6 +159,41 @@ export async function apply(ctx, config) {
     const latest = { ...collected, summary, summaryError, timezone: config.timezone, fetcherDir: config.fetcherDir }
     writeFileSync(latestFile, JSON.stringify(latest, null, 2))
     return latest
+  }
+
+  // ── on-demand per-article summary (panel button, outside the pipeline) ──
+
+  /**
+   * rid = bookId + '_' + article-URL slug with every `_` re-encoded as `~`
+   * (the inverse of the fetcher's `~` → `_` URL rebuild — WeRead's originalId
+   * escapes base64url underscores because rid uses `_` as its separator).
+   * Fallback for latest.json files written before items carried the rid.
+   * @param {string} url mp.weixin article URL
+   * @param {string} bookId the account's MP_WXS_ id
+   * @returns {string} derived rid, or '' when undecidable
+   */
+  function deriveRid(url, bookId) {
+    const m = String(url || '').match(/mp\.weixin\.qq\.com\/s\/([A-Za-z0-9_-]+)/)
+    return m && BOOK_ID_RE.test(String(bookId || '')) ? bookId + '_' + m[1].replace(/_/g, '~') : ''
+  }
+
+  /** Fetch one article's body text via the fetcher's --content mode (free of quota). */
+  async function fetchArticleText(rid, signal) {
+    const { code, stdout, stderr } = await runFetcher(config.fetcherDir, ['--content', rid], signal)
+    if (code !== 0) {
+      const errText = String(stderr || '').trim()
+      throw new Error(explainSrcErr(errText).trim() || 'fetcher 异常退出（code ' + code + '）')
+    }
+    let body
+    try {
+      body = JSON.parse(stdout)
+    } catch {
+      throw new Error('fetcher --content 输出不是合法 JSON')
+    }
+    if (!body || body.ok !== true || !String(body.text || '').trim()) {
+      throw new Error(String((body && body.err) || '文章正文为空'))
+    }
+    return String(body.text)
   }
 
   // One pipeline at a time per process (the GUI button and a concurrent /wx
@@ -300,6 +336,33 @@ export async function apply(ctx, config) {
               return sendJson(res, 200, { ok: true, data: latest })
             } finally {
               collecting = false
+              clearTimeout(timer)
+            }
+          }
+          if (req.method === 'POST' && seg[0] === 'summarize' && seg.length === 1) {
+            // Independent of the collect single-flight: --content is a free
+            // reader-page read and the config write is atomic, so a summary
+            // request may run while a collect is in progress.
+            const body = JSON.parse((await readBody(req)) || '{}')
+            let rid = String(body.rid || '').trim()
+            if (!rid) {
+              const acc = loadAccounts().find((a) => a.name === body.configName) || {}
+              rid = deriveRid(body.url, acc.bookId)
+            }
+            if (!rid) return sendJson(res, 400, { ok: false, error: '这篇文章没有 rid（旧采集结果）：重新点一次「⚡ 采集」后即可生成摘要' })
+            const ac = new AbortController()
+            // Safety ceiling for the whole request (body fetch ~2s + one LLM
+            // call); not a deployment tunable.
+            const timer = setTimeout(() => ac.abort(), 120000)
+            try {
+              await ensureChrome(ac.signal)
+              const text = await fetchArticleText(rid, ac.signal)
+              const summary = await summarizeArticle({ title: body.title, account: body.configName, text, stream, signal: ac.signal, maxTokens: config.summaryMaxTokens })
+              return sendJson(res, 200, { ok: true, summary })
+            } catch (err) {
+              const msg = String((err && err.message) || err)
+              return sendJson(res, ac.signal.aborted ? 408 : 500, { ok: false, error: ac.signal.aborted ? '生成摘要超时（120s），请重试' : msg })
+            } finally {
               clearTimeout(timer)
             }
           }

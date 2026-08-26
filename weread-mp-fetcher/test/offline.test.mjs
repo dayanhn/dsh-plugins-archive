@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
-import { PROBE_JS, buildPageJs, LIST_SHELF_JS, buildAddToShelfJs } from '../lib/scripts.mjs';
+import { PROBE_JS, buildPageJs, LIST_SHELF_JS, buildAddToShelfJs, buildContentJs } from '../lib/scripts.mjs';
 import { extractBiz, bizToBookId, resolveBookId } from '../lib/mp.mjs';
 import * as quota from '../lib/quota.mjs';
 import { has, val, valOpt } from '../lib/args.mjs';
@@ -305,6 +305,48 @@ const ad2 = await runAddJs(['MP_WXS_1'], { reject: true });
 assert.equal(ad2.out.ok, false);
 assert.ok(String(ad2.out.err).includes('boom'), '页内 fetch 挂掉要 resolve 成 {ok:false},不许让 evaluate 抛错');
 ok('订阅脚本三条路径同口径:成功带回响应文本,fetch 挂掉不再穿透抛错');
+
+// ---------- 正文脚本(--content) ----------
+// 与 runPageJs 同款:在 vm 里真跑 buildContentJs,验行为不搜字符串。
+async function runContentJs(rid, html, { reject = false } = {}) {
+  let requested = null;
+  const s = await vm.runInNewContext(buildContentJs(rid), {
+    fetch: (u) => {
+      requested = u;
+      return reject ? Promise.reject(new Error('boom')) : Promise.resolve({ text: () => Promise.resolve(html) });
+    },
+    encodeURIComponent,
+    Promise,
+    JSON,
+    String,
+  });
+  return { requested, out: JSON.parse(s) };
+}
+
+// HTML 里的字符串字面量(单引号,冒号后带空格):
+//   第一段\x0a\x0a第二段含"引号"与\\x0a字面量和\u4e2d文
+// 其中 \\x0a 是**转义反斜杠 + 字面 "x0a"** —— 单遍解转义的正靶子:
+// 连续正则链会把它误解成 反斜杠+换行,正确结果应是字面 \x0a。
+const cRid = 'MP_WXS_1234567890_abc~def';
+const cHtml =
+  '<html><body><script>var d={title:"t",content_noencode: \'' +
+  '第一段\\x0a\\x0a第二段含"引号"与\\\\x0a字面量和\\u4e2d文' +
+  '\'};</script></body></html>';
+const c1 = await runContentJs(cRid, cHtml);
+assert.equal(c1.requested, '/web/mp/content?reviewId=' + encodeURIComponent(cRid), '请求的 URL 必须逐字如此(rid 保持 ~ 不还原)');
+const cExpected = '第一段\n\n第二段含"引号"与\\x0a字面量和中文';
+assert.equal(c1.out.ok, true);
+assert.equal(c1.out.text, cExpected, '\\xNN / \\uNNNN / \\n 系解转义,且 \\\\x0a 保留为字面量');
+assert.equal(c1.out.chars, cExpected.length, 'chars 是解转义后的文本长度');
+ok('正文脚本:content_noencode 抽出并单遍解转义(含 \\\\x0a 陷阱)');
+
+const c2 = await runContentJs(cRid, '<html><body>没有正文字段的页面</body></html>');
+assert.equal(c2.out.ok, false);
+assert.ok(String(c2.out.err).includes('content_noencode'), '字段缺失要报得出来(下游文案依赖)');
+const c3 = await runContentJs(cRid, cHtml, { reject: true });
+assert.equal(c3.out.ok, false);
+assert.ok(String(c3.out.err).includes('boom'), '页内 fetch 挂掉要 resolve 成 {ok:false},不许穿透');
+ok('正文脚本三条路径同口径:成功带回文本,字段缺失/页内异常都 resolve 成 {ok:false,…}');
 
 // ---------- --out 路径解析的目录意图 ----------
 // 靶子:`--out newdir/`(目录尚不存在)必须进目录用默认文件名,

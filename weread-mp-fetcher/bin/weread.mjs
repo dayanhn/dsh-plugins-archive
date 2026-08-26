@@ -9,6 +9,7 @@
 //   node bin/weread.mjs --probe         只看页面状态,不抓取(免费,不消耗额度)
 //   node bin/weread.mjs --shelf         列出你已订阅的公众号及其 bookId
 //   node bin/weread.mjs --add <链接|bookId>...  订阅公众号(可给文章链接,自动算出 bookId)
+//   node bin/weread.mjs --content <rid> 取某篇文章的正文(rid 来自抓取结果里的 items[].rid;免费)
 //   node bin/weread.mjs --quota         查看今日已抓次数
 //   node bin/weread.mjs --config x.json 指定配置文件
 
@@ -17,7 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { connectChrome, listTabs, createTab, evaluate, reloadTab } from '../lib/cdp.mjs';
-import { PROBE_JS, buildPageJs, LIST_SHELF_JS, buildAddToShelfJs } from '../lib/scripts.mjs';
+import { PROBE_JS, buildPageJs, LIST_SHELF_JS, buildAddToShelfJs, buildContentJs } from '../lib/scripts.mjs';
 import { resolveBookId } from '../lib/mp.mjs';
 import * as quota from '../lib/quota.mjs';
 import { has, val, valOpt } from '../lib/args.mjs';
@@ -242,8 +243,10 @@ async function main() {
   //   在 --quota **之后** —— 否则 config 里写了超限值的用户连账本都查不了;
   //   在 connectChrome **之前** —— 让"超限"这件事零连接、零请求、零额度就能拒绝,
   //   也让"闸门是不是真的在请求之前"变得可证伪(报的是闸门文案还是连接错误)。
-  // --shelf / --add / --probe 的处理在 connectChrome 之后,所以豁免必须显式写出来。
-  const isFetchRun = !has(argv, '--shelf') && !has(argv, '--add') && !has(argv, '--probe');
+  // --shelf / --add / --probe / --content 的处理在 connectChrome 之后,所以豁免必须显式写出来。
+  // --content 免费:它是阅读器页里的一次正文读取,等价于用户在微信读书里打开一篇文章,
+  // 不进 maxRunsPerDay / maxRequestsPerDay 账本(账本只护住文章**列表**接口)。
+  const isFetchRun = !has(argv, '--shelf') && !has(argv, '--add') && !has(argv, '--probe') && !has(argv, '--content');
   const maxPages = cfg.maxPagesPerRun ?? 3;
   if (isFetchRun && pages > maxPages) {
     console.error(
@@ -321,6 +324,32 @@ async function main() {
       console.error(
         `\n共 ${books.length} 个公众号。把想监控的 name/bookId 粘进 config.json 的 accounts 即可。`
       );
+      return;
+    }
+
+    if (has(argv, '--content')) {
+      const rid = val(argv, '--content', '').trim();
+      // rid 形如 MP_WXS_<数字>_<originalId>:字母数字加 _ ~ - .,白名单挡住引号/空格
+      if (!/^[A-Za-z0-9_~.-]+$/.test(rid)) {
+        console.error('用法:--content <rid>\n  rid 是抓取结果 JSON 里 sources[].items[].rid(形如 MP_WXS_3223096120_xxx)。');
+        process.exitCode = 2;
+        return;
+      }
+      const { targetId: ct } = await getReaderTab(session, cfg);
+      const cs = await probeUntilReady(session, ct);
+      if (cs.verdict !== 'ready') {
+        console.error(`无法取正文(${cs.verdict}):${explain(cs)}`);
+        process.exitCode = 1;
+        return;
+      }
+      const o = JSON.parse(await evaluate(session, ct, buildContentJs(rid)));
+      if (!o || o.ok !== true) {
+        console.error('正文接口出错:' + ((o && o.err) || '返回了无法识别的结果'));
+        process.exitCode = 1;
+        return;
+      }
+      console.log(JSON.stringify(o));
+      console.error(`正文 ${o.chars} 字`);
       return;
     }
 

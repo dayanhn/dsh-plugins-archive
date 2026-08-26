@@ -60,6 +60,34 @@ function userMessage(text) {
 }
 
 /**
+ * Consume one auxiliary LLM stream: collect text-delta, remember the finish
+ * chunk, throw on hard failures (terminal error / aborted). Finish-kind
+ * policy (max-tokens etc.) is each caller's — the batch JSON call treats a
+ * truncated JSON as an error, the single-article call accepts the text.
+ * @param {(options:object)=>AsyncIterable<object>} stream ctx.llm.stream with provider/model pre-bound.
+ * @param {object} p
+ * @param {string} p.system
+ * @param {string} p.user
+ * @param {number} [p.maxTokens]
+ * @param {AbortSignal} [p.signal]
+ * @returns {Promise<{text:string, finish:object|null}>}
+ */
+async function runStreamText(stream, { system, user, maxTokens, signal }) {
+  let text = ''
+  let finish = null
+  for await (const chunk of stream({ system, messages: [userMessage(user)], temperature: 0, maxTokens, signal })) {
+    if (chunk.type === 'text-delta') text += chunk.text
+    else if (chunk.type === 'finish') finish = chunk
+  }
+  if (finish && finish.kind === 'error') {
+    const f = finish.failure || {}
+    throw new Error('LLM 摘要调用失败：' + (f.message || f.code || JSON.stringify(f)))
+  }
+  if (finish && finish.kind === 'aborted') throw new Error('LLM 摘要调用被中止')
+  return { text, finish }
+}
+
+/**
  * One auxiliary LLM call over the collected items.
  * @param items collected articles (any window).
  * @param {object} p
@@ -70,17 +98,7 @@ function userMessage(text) {
  */
 export async function summarizeItems(items, { stream, signal, maxTokens = 16384 } = {}) {
   const user = '本次采集到 ' + items.length + ' 篇文章：\n\n' + buildSummaryPayload(items) + '\n\n请严格按系统要求输出 JSON。'
-  let text = ''
-  let finish = null
-  for await (const chunk of stream({ system: SUMMARY_SYSTEM, messages: [userMessage(user)], temperature: 0, maxTokens, signal })) {
-    if (chunk.type === 'text-delta') text += chunk.text
-    else if (chunk.type === 'finish') finish = chunk
-  }
-  if (finish && finish.kind === 'error') {
-    const f = finish.failure || {}
-    throw new Error('LLM 摘要调用失败：' + (f.message || f.code || JSON.stringify(f)))
-  }
-  if (finish && finish.kind === 'aborted') throw new Error('LLM 摘要调用被中止')
+  const { text, finish } = await runStreamText(stream, { system: SUMMARY_SYSTEM, user, maxTokens, signal })
   if (finish && finish.kind === 'max-tokens') {
     throw new Error(
       text.trim()
@@ -90,6 +108,46 @@ export async function summarizeItems(items, { stream, signal, maxTokens = 16384 
   }
   if (!text.trim()) throw new Error('LLM 摘要调用未返回内容（finish: ' + JSON.stringify(finish) + '）')
   return parseSummary(text)
+}
+
+// ── per-article summary (on demand, from the panel button) ─────────────────
+
+export const ITEM_SUMMARY_SYSTEM = [
+  '你是微信公众号内容编辑。用户在浏览文章列表，靠你写的摘要决定要不要点开原文。',
+  '读完给出的全文，为这一篇写一篇摘要：',
+  '1. 忠实原文：不编造、不脑补、不评价，原文没有的信息不写；',
+  '2. 覆盖主要观点、关键数据与结论；',
+  '3. 长短由内容决定：短文短摘，长文可分点，不设固定字数；',
+  '4. 直接输出摘要正文：中文，不用标题、客套话或「本文介绍了」这类开头。',
+].join('\n')
+
+/** 送进 LLM 的正文截断上限（字符）：摘要所需的信息集中在正文前段，12000 足够且控制成本。 */
+export const MAX_SUMMARY_BODY_CHARS = 12000
+
+/**
+ * One auxiliary LLM call summarizing a SINGLE article's body text. Runs
+ * outside the collect pipeline (the body is fetched on demand). Output
+ * length is the model's call; `maxTokens` is a safety ceiling, not a
+ * length target.
+ * @param {object} p
+ * @param {string} [p.title]
+ * @param {string} [p.account]
+ * @param {string} p.text article body (plain text)
+ * @param {(options:object)=>AsyncIterable<object>} p.stream ctx.llm.stream with provider/model pre-bound.
+ * @param {AbortSignal} [p.signal]
+ * @param {number} [p.maxTokens]
+ * @returns {Promise<string>} the summary text
+ */
+export async function summarizeArticle({ title, account, text, stream, signal, maxTokens = 16384 } = {}) {
+  const body = String(text || '').trim()
+  if (!body) throw new Error('文章正文为空，无法生成摘要')
+  const clipped = body.length > MAX_SUMMARY_BODY_CHARS
+  const user = '公众号：' + (account || '未知') + '\n标题：' + (title || '（无）') + '\n\n正文' + (clipped ? '（前 ' + MAX_SUMMARY_BODY_CHARS + ' 字，后文略）' : '') + '：\n' + body.slice(0, MAX_SUMMARY_BODY_CHARS)
+  const { text: out, finish } = await runStreamText(stream, { system: ITEM_SUMMARY_SYSTEM, user, maxTokens, signal })
+  // max-tokens here = the summary hit the output ceiling: rare, and the
+  // truncated text is still a usable summary.
+  if (!out.trim()) throw new Error('LLM 摘要调用未返回内容（finish: ' + JSON.stringify(finish) + '）')
+  return out.trim()
 }
 
 /**

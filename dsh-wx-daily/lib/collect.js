@@ -28,11 +28,11 @@
  * exhausted, all sources failed, fetcher missing) throw.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const BOOK_ID_RE = /^MP_WXS_\d+$/
+export const BOOK_ID_RE = /^MP_WXS_\d+$/
 
 /**
  * 微信读书 createTime (unix seconds) → ISO; tolerate ms as well.
@@ -116,21 +116,22 @@ function readFetcherConfig(dir) {
 }
 
 /**
- * Run the fetcher CLI. Proxy vars are stripped from the env: the WeRead
- * traffic is a domestic site reached directly, and a socks all_proxy leaks
- * into the child exactly like it did for the wewe-rss server (axios cannot
- * speak socks and fails with ERR_INVALID_PROTOCOL).
+ * Run the fetcher CLI with an arbitrary argv. Proxy vars are stripped from
+ * the env: the WeRead traffic is a domestic site reached directly, and a
+ * socks all_proxy leaks into the child exactly like it did for the
+ * wewe-rss server (axios cannot speak socks and fails with
+ * ERR_INVALID_PROTOCOL).
  * @param {string} fetcherDir
- * @param {number} pages
+ * @param {string[]} args e.g. ['--pages','1'] or ['--content','MP_WXS_...']
  * @param {AbortSignal} [signal]
  * @returns {Promise<{code:number,stdout:string,stderr:string}>}
  */
-async function defaultRun(fetcherDir, pages, signal) {
+export async function runFetcher(fetcherDir, args, signal) {
   const { spawn } = await import('node:child_process')
   const env = { ...process.env }
   for (const k of ['http_proxy', 'https_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']) delete env[k]
   return await new Promise((resolveP) => {
-    const child = spawn(process.execPath, [path.join(fetcherDir, 'bin', 'weread.mjs'), '--pages', String(pages)], {
+    const child = spawn(process.execPath, [path.join(fetcherDir, 'bin', 'weread.mjs'), ...args], {
       env,
       signal,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -153,6 +154,10 @@ async function defaultRun(fetcherDir, pages, signal) {
     })
     child.on('close', (code) => finish(code ?? -1))
   })
+}
+
+async function defaultRun(fetcherDir, pages, signal) {
+  return runFetcher(fetcherDir, ['--pages', String(pages)], signal)
 }
 
 /**
@@ -185,7 +190,7 @@ export function fetcherExitError(code, stderr) {
  *   collectedAt: string,
  *   window: {fromMs:number,toMs:number,label:string},
  *   accounts: Array<{name:string,status:'ok'|'empty'|'nofeed'|'error',count:number,error?:string,articles:Array<object>}>,
- *   items: Array<{account:string,title:string,url:string,publishedAt:string,summary:string}>,
+ *   items: Array<{account:string,configName:string,title:string,url:string,rid:string,publishedAt:string,summary:string}>,
  *   stats: {ok:number,empty:number,nofeed:number,error:number,items:number}
  * }>}
  */
@@ -215,7 +220,11 @@ export async function collect({ fetcherDir, fetcherPages = 1, accounts, window, 
   }
 
   // 1) sync the account list into the fetcher config (transport/quota keys preserved).
-  writeFileSync(path.join(dir, 'config.json'), JSON.stringify(mergeFetcherConfig(readFetcherConfig(dir), subscribed), null, 2) + '\n')
+  //    Atomic (tmp + rename): a concurrent --content run must never observe a
+  //    half-written config.json.
+  const cfgPath = path.join(dir, 'config.json')
+  writeFileSync(cfgPath + '.tmp-' + process.pid, JSON.stringify(mergeFetcherConfig(readFetcherConfig(dir), subscribed), null, 2) + '\n')
+  renameSync(cfgPath + '.tmp-' + process.pid, cfgPath)
 
   // 2) run the fetcher once for all accounts (serial, 3s gaps, quota-gated).
   const { code, stdout, stderr } = await (runImpl || defaultRun)(dir, fetcherPages, signal)
@@ -236,17 +245,20 @@ export async function collect({ fetcherDir, fetcherPages = 1, accounts, window, 
       } else if (src.err) {
         report.error = explainSrcErr(src.err)
       } else {
-        const all = (src.items || []).map((it) => ({
-          title: it.title || it.url,
-          link: it.url || '',
-          publishedAt: isoFromUnixSecs(it.t),
-        }))
+        const all = []
+        for (const it of src.items || []) {
+          // 无标题的文章直接过滤（不显示）：留 URL 当标题没有任何信息量。
+          const title = String(it.title || '').trim()
+          if (!title) continue
+          all.push({ title, link: it.url || '', publishedAt: isoFromUnixSecs(it.t), rid: String(it.rid || '') })
+        }
         const inWin = filterByWindow(all, window.fromMs, window.toMs)
         report.articles = inWin.map((it) => ({
           configName: acc.name,
           account: src.name || acc.name,
           title: it.title,
           url: it.link,
+          rid: it.rid,
           publishedAt: it.publishedAt,
           summary: '',
         }))

@@ -5,6 +5,8 @@
 //     (server-side: local 微信读书 session → window filter → optional LLM 要点)
 //   • aggregated article list, newest first, per-account status chips
 //     (double as filters); titles are real links (target _blank)
+//   • per-article on-demand summary button (body fetched on demand → one LLM
+//     call, thinking off, length model-decided); async, never blocks browsing
 //   • setup banner while the fetcher / dedicated WeRead Chrome is not ready
 // The tab registers through the betterSidebar service (ctx.inject), so the
 // client half is a no-op when dsh-better-sidebar is not mounted.
@@ -158,9 +160,12 @@ window.__ModuleLoader__.load({
       const [to, setTo] = React.useState(todayKey(0))
       const [withSummary, setWithSummary] = React.useState(true)
       const [filter, setFilter] = React.useState('')
+      // 逐篇摘要：key = item.rid || item.url → {state:'loading'|'done'|'error', text?, error?}
+      // 面板会话内状态（不写回 latest.json）：重新采集/刷新后清空重来。
+      const [sums, setSums] = React.useState({})
 
       const loadLatest = React.useCallback(async () => {
-        setBusy('list'); setError('')
+        setBusy('list'); setError(''); setSums({})
         try {
           const [latest, st] = await Promise.all([api('GET', '/wx-daily/latest'), api('GET', '/wx-daily/status')])
           setData(latest.data || null)
@@ -171,13 +176,25 @@ window.__ModuleLoader__.load({
       React.useEffect(() => { loadLatest() }, [loadLatest])
 
       const doCollect = async () => {
-        setBusy('collect'); setError(''); setFilter('')
+        setBusy('collect'); setError(''); setFilter(''); setSums({})
         try {
           const body = win === 'custom' ? { from, to, withSummary } : { window: win, withSummary }
           const res = await api('POST', '/wx-daily/collect', body)
           setData(res.data || null)
         } catch (e) { setError(String(e.message || e)) }
         setBusy('')
+      }
+
+      // 单篇按需摘要：独立的 fetch，生成期间不阻塞浏览；可多篇同时在途。
+      const doSummarize = async (it) => {
+        const key = it.rid || it.url
+        setSums((s) => ({ ...s, [key]: { state: 'loading' } }))
+        try {
+          const res = await api('POST', '/wx-daily/summarize', { rid: it.rid || '', url: it.url || '', configName: it.configName || '', title: it.title || '' })
+          setSums((s) => ({ ...s, [key]: { state: 'done', text: res.summary } }))
+        } catch (e) {
+          setSums((s) => ({ ...s, [key]: { state: 'error', error: String(e.message || e) } }))
+        }
       }
 
       const btn = (label, onClick, disabled, style) => React.createElement('button', {
@@ -255,17 +272,40 @@ window.__ModuleLoader__.load({
             continue
           }
           for (const it of rows) {
+            const sm = sums[it.rid || it.url]
+            // 摘要内联在标题下方（完整显示、不截断）：用户就是靠它决定点不点开。
             els.push(React.createElement('div', {
               key: (it.url || it.title) + '-' + els.length,
               className: 'wxd-row',
-              style: { display: 'flex', gap: 8, padding: '5px 8px', borderRadius: 6, marginBottom: 1 },
+              style: { padding: '5px 8px', borderRadius: 6, marginBottom: 1 },
             },
-              React.createElement('span', { style: { width: 84, flex: 'none', fontSize: 10.5, opacity: 0.5, paddingTop: 2, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' } }, fmtTime(it.publishedAt, tz)),
-              React.createElement('a', {
-                className: 'wxd-title',
-                href: it.url, target: '_blank', rel: 'noreferrer',
-                style: { flex: 1, fontSize: 12.5, lineHeight: 1.5, color: 'inherit', textDecoration: 'none' },
-              }, it.title)))
+              React.createElement('div', { style: { display: 'flex', gap: 8 } },
+                React.createElement('span', { style: { width: 84, flex: 'none', fontSize: 10.5, opacity: 0.5, paddingTop: 2, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' } }, fmtTime(it.publishedAt, tz)),
+                React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                  React.createElement('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
+                    React.createElement('a', {
+                      className: 'wxd-title',
+                      href: it.url, target: '_blank', rel: 'noreferrer',
+                      style: { flex: 1, fontSize: 12.5, lineHeight: 1.5, color: 'inherit', textDecoration: 'none' },
+                    }, it.title),
+                    React.createElement('button', {
+                      type: 'button',
+                      className: 'wxd-chip',
+                      onClick: () => doSummarize(it),
+                      disabled: sm && sm.state === 'loading',
+                      title: '读取全文生成摘要（思考模式关闭，长度由模型定）；生成期间可继续浏览其它文章',
+                      style: {
+                        flex: 'none', background: 'transparent', color: 'inherit',
+                        border: '1px solid ' + T.border, borderRadius: 10, padding: '1px 8px',
+                        fontSize: 10.5, lineHeight: 1.5,
+                        cursor: sm && sm.state === 'loading' ? 'default' : 'pointer',
+                        opacity: sm && sm.state === 'loading' ? 0.5 : 0.8,
+                      },
+                    }, sm && sm.state === 'loading' ? '生成中…' : sm && sm.state === 'done' ? '重新生成' : sm && sm.state === 'error' ? '重试' : '生成摘要'),
+                  ),
+                  sm && sm.state === 'loading' ? React.createElement('div', { style: { fontSize: 11, opacity: 0.5, marginTop: 3 } }, '正在读取全文并生成摘要…') : null,
+                  sm && sm.state === 'done' && sm.text ? React.createElement('div', { style: { fontSize: 11.5, lineHeight: 1.65, opacity: 0.78, marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, sm.text) : null,
+                  sm && sm.state === 'error' ? React.createElement('div', { style: { fontSize: 11, color: T.danger, marginTop: 3, opacity: 0.9 } }, '摘要失败：' + sm.error) : null))))
           }
         }
         if (visibleItems === 0 && hasCollectable) {
