@@ -357,7 +357,8 @@ window.__ModuleLoader__.load({
           })) : null,
         // list
         !data && !error ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6, lineHeight: 1.6 } }, '还没有采集记录。选个时间窗点「⚡ 采集」，或在对话里输入 /wx。') : null,
-        (busy === 'collect') ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6 } }, '正在通过本机微信读书会话逐号抓取（3 秒/号间隔' + (withSummary ? '，之后生成摘要' : '') + '，约 1~2 分钟）…') : null,
+        // 自动生成的只有批量「要点」块；逐篇摘要是列表里手动点「生成摘要」按钮才有。
+        (busy === 'collect') ? React.createElement('div', { style: { fontSize: 12, opacity: 0.6 } }, '正在通过本机微信读书会话逐号抓取（3 秒/号间隔' + (withSummary ? '，之后生成「要点」摘要' : '') + '，约 1~2 分钟）…') : null,
         data ? renderGroups() : null
       )
     }
