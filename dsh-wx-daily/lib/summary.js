@@ -121,8 +121,8 @@ export const ITEM_SUMMARY_SYSTEM = [
   '4. 直接输出摘要正文：中文，不用标题、客套话或「本文介绍了」这类开头。',
 ].join('\n')
 
-/** 送进 LLM 的正文截断上限（字符）：摘要所需的信息集中在正文前段，12000 足够且控制成本。 */
-export const MAX_SUMMARY_BODY_CHARS = 12000
+/** 送进 LLM 的正文截断上限（字符）：摘要所需的信息集中在正文前段，20000 足够且控制成本。 */
+export const MAX_SUMMARY_BODY_CHARS = 20000
 
 /**
  * One auxiliary LLM call summarizing a SINGLE article's body text. Runs
