@@ -2837,11 +2837,12 @@ window.__ModuleLoader__.load({
 		}
 		/** How long the row's "copied" label stays after a successful write. */
 		const COPIED_MS = 1200;
-		/** The local opener on the VIEWING machine (dsh-open-local.js, loopback
-		*  :3900): receives the file bytes the browser fetched from this headless
-		*  host and launches the desktop default app. Cross-origin, so the opener
-		*  answers CORS for private-network origins only. */
-		const LOCAL_DSH_OPENER = "http://127.0.0.1:3900/open";
+		/** The opener on the VIEWING machine (dsh-open-local.js, loopback :3900):
+		*  GET / probes it, POST /open?filename=... takes the file bytes the
+		*  browser fetched from the host and launches the desktop default app.
+		*  Cross-origin, so the opener answers CORS for private origins only.
+		*  The opener is tried FIRST — it marks the machine the user sits at. */
+		const LOCAL_DSH_OPENER_BASE = "http://127.0.0.1:3900";
 		function FileTree(props) {
 			const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onDeleted } = props;
 			const [data, setData] = (0, react.useState)({});
@@ -3130,23 +3131,39 @@ window.__ModuleLoader__.load({
 							return;
 						}
 						if (id === "open-app") {
-							// Host-side launch first. A headless host (remote-server
-							// instance, no display) answers fs-headless; then the
-							// browser fetches the original bytes from that host
-							// (same origin; raw=1 skips the Office preview) and
-							// hands them to the viewing machine's local opener,
-							// which writes a temp file and launches the desktop
-							// default app. No opener running → plain download so
-							// the file still lands on this machine.
-							api.fsOpen({
-								sessionId,
-								cwd
-							}, target.path).catch(async (reason) => {
-								if (!(reason instanceof SidebarApiError) || reason.code !== "fs-headless") {
+							// The viewing machine's opener goes FIRST: whoever
+							// runs dsh-open-local.js (loopback :3900) is the
+							// machine the user sits at, so the file opens there
+							// no matter which machine hosts the dsh instance.
+							// No opener running → the host launches it itself
+							// when it has a display; a headless host degrades
+							// to a browser download.
+							const openOnHost = () =>
+								api.fsOpen({
+									sessionId,
+									cwd
+								}, target.path).catch(async (reason) => {
+									if (reason instanceof SidebarApiError && reason.code === "fs-headless") {
+										// Headless host and no opener here: at
+										// least land the file as a download.
+										downloadFile(target.path);
+										window.alert(t("openerFallback"));
+										return;
+									}
 									window.alert(`${t("openAppError")}: ${reason instanceof Error ? reason.message : String(reason)}`);
+								});
+							(async () => {
+								let hasOpener = true;
+								try {
+									const probe = await fetch(LOCAL_DSH_OPENER_BASE);
+									hasOpener = probe.ok;
+								} catch {
+									hasOpener = false;
+								}
+								if (!hasOpener) {
+									openOnHost();
 									return;
 								}
-								let buf;
 								try {
 									const resp = await fetch(fileUrl({
 										sessionId,
@@ -3154,31 +3171,21 @@ window.__ModuleLoader__.load({
 									}, target.path, true, true));
 									if (!resp.ok) {
 										const parsed = await resp.json().catch(() => null);
-										window.alert(`${t("openAppError")}: ${parsed?.error?.message ?? `HTTP ${resp.status}`}`);
-										return;
+										throw new Error(parsed?.error?.message ?? `HTTP ${resp.status}`);
 									}
-									buf = await resp.arrayBuffer();
-								} catch (fetchError) {
-									window.alert(`${t("openAppError")}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
-									return;
-								}
-								const name = baseName$1(target.path);
-								try {
-									const openerResp = await fetch(`${LOCAL_DSH_OPENER}?filename=${encodeURIComponent(name)}`, {
+									const buf = await resp.arrayBuffer();
+									const openerResp = await fetch(`${LOCAL_DSH_OPENER_BASE}/open?filename=${encodeURIComponent(baseName$1(target.path))}`, {
 										method: "POST",
 										headers: { "content-type": "application/octet-stream" },
 										body: buf
 									});
 									const parsed = await openerResp.json().catch(() => null);
 									if (openerResp.ok && parsed?.ok === true) return;
-									window.alert(`${t("openAppError")}: ${parsed?.error ?? `HTTP ${openerResp.status}`}`);
-								} catch {
-									// The viewing machine has no opener on :3900 —
-									// download the file here instead.
-									downloadFile(target.path);
-									window.alert(t("openerFallback"));
+									throw new Error(parsed?.error ?? `HTTP ${openerResp.status}`);
+								} catch (openerError) {
+									window.alert(`${t("openAppError")}: ${openerError instanceof Error ? openerError.message : String(openerError)}`);
 								}
-							});
+							})();
 							return;
 						}
 						if (id === "delete") {

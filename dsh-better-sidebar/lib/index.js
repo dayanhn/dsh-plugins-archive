@@ -2693,8 +2693,8 @@ function buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, ge
 			if (!info.isFile()) throw new SidebarError("fs-error", "not a file", 400);
 			// Headless host (server instance without a display): spawning the
 			// desktop opener would "succeed" into the void. The client sees the
-			// fs-headless code and falls back to the local machine's dsh-remote
-			// bridge, which fetches the file over SFTP and opens it locally.
+			// fs-headless code and, if no local opener (dsh-open-local.js on
+			// :3900) answered first, degrades to a browser download.
 			if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) throw new SidebarError("fs-headless", "headless host", 503);
 			const child = spawnDesktopOpen(path);
 			// Swallow the async spawn failure (opener died after launch): the
